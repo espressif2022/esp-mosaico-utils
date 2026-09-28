@@ -24,7 +24,7 @@ python mosaico.py recover --device-id DEVICE_ID --recovery-port COM14 --source c
 ```
 
 Omit `--source current` to use the reviewed bundle. `--dry-run` resolves the live
-identity and port without building, leasing, resetting or writing. This option
+identity and port without building, resetting or writing. This option
 requires exactly one connected Espressif `303A:1001` interface, and the named
 port must identify it. Selecting it asserts that this independently connected
 interface belongs to the chosen board. For a device already in ROM download
@@ -32,29 +32,23 @@ mode, prefer `--hardware-mac`; its eFuse identity is read directly instead of
 inferring an association from USB topology.
 
 The command prepares the complete reviewed/current Recovery bundle before
-maintenance. It acquires the primary device lease (including crash evidence)
-and a separate physical endpoint lease, so Gateway sessions on both interfaces
-are detached and their cross-process reservations remain held during flashing.
-The serial interface is enumerated again before the write; an identity change,
-ambiguous endpoint, conflicting owner or lease failure prevents flashing. A
-Gateway that cannot reserve both interfaces fails closed. Other applications
-must release the serial port; a busy port is an error, never an invitation to
-force another session open.
+submitting one local Gateway operation. The operation preserves crash evidence
+and detaches both the managed interface and the explicit programming interface.
+A separate foreground executor holds physical locks on both endpoints while
+writing. The serial interface is enumerated again before the write; an identity
+change, ambiguous endpoint or conflicting owner prevents flashing. Other
+applications must release the serial port before this operation can use it.
 
 Only the existing `mosaico-recover-flash` target writes firmware. Its complete
 bundle writes bootloader, partition table, OTA selection data and factory
 Recovery; this option does **not** introduce whole-flash erase or a
 Recovery-partition-only mode. Preserve the normal bundle/layout contract.
 Recovery acceptance uses the original managed connection: the same Device ID,
-a new Boot ID and the prepared Recovery version must be verified before the
-independent endpoint lease is released. The auxiliary lease is released with
-an abort action because it represents only a transport reservation, not a
-second acceptance result. Failure unwinds remaining leases, with quarantine
-reported if cleanup fails.
-
-`recovery-route.json` in the operation evidence directory records both lease
-IDs, the selected USB identity and the original Device/Boot IDs, without lease
-tokens. Gateway records retain the detailed before/after and crash evidence.
+a new Boot ID, the prepared Recovery version and OTA capability must be verified.
+The operation record contains before/after evidence and links to the raw writer
+log. Its operation ID is included in the command result and `host-operation.json`.
+There are no separate endpoint leases, tokens or manual abort/renewal steps.
+Failure remains recorded after the temporary process-owned exclusion ends.
 
 Recovery remote downloads now use [HTTPS Bridge](firmware/recovery/README.md).
 Configure the build Origin and board ID, then use `mosaico.py iris test bridge-code` or

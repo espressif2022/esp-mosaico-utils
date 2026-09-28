@@ -138,11 +138,11 @@ def test_quiesce_retains_endpoint_lock_and_resume_restarts_only_that_supervisor(
                 break
             await asyncio.sleep(0.002)
         device_id = hub.list_devices()[0]["device_id"]
-        detached = await hub.quiesce_device(device_id)
-        assert detached["state"] == "maintenance_detached"
+        detached = await hub.detach_for_host(endpoint)
+        assert detached["state"] == "host_operation"
         assert endpoint in hub._locks
         assert endpoint not in hub._endpoint_tasks
-        await hub.resume_maintenance_endpoint(endpoint)
+        await hub.resume_after_host(endpoint)
         for _ in range(100):
             if hub.list_devices():
                 break
@@ -153,7 +153,7 @@ def test_quiesce_retains_endpoint_lock_and_resume_restarts_only_that_supervisor(
     asyncio.run(scenario())
 
 
-def test_quiesce_endpoint_without_hello_identity_releases_physical_link() -> None:
+def test_detach_for_host_without_hello_identity_releases_physical_link() -> None:
     class HandshakingLink:
         endpoint = "usb:location=test:1.0"
 
@@ -189,13 +189,13 @@ def test_quiesce_endpoint_without_hello_identity_releases_physical_link() -> Non
             if hub.list_endpoints()[0]["state"] == "handshaking":
                 break
             await asyncio.sleep(0.002)
-        detached = await hub.quiesce_endpoint(HandshakingLink.endpoint)
-        assert detached["state"] == "maintenance_detached"
+        detached = await hub.detach_for_host(HandshakingLink.endpoint)
+        assert detached["state"] == "host_operation"
         assert detached["device_id"] is None
         assert HandshakingLink.endpoint in hub._locks
         assert HandshakingLink.endpoint not in hub._endpoint_tasks
         assert links[0].closed
-        await hub.resume_maintenance_endpoint(HandshakingLink.endpoint)
+        await hub.resume_after_host(HandshakingLink.endpoint)
         assert HandshakingLink.endpoint in hub._endpoint_tasks
         await hub.close()
 

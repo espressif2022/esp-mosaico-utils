@@ -1,3 +1,4 @@
+#include "esp_attr.h"
 // SPDX-License-Identifier: Apache-2.0
 
 #include "factory_system_update.h"
@@ -64,7 +65,7 @@ static bool s_nand_busy;
 static portMUX_TYPE s_nand_task_lock = portMUX_INITIALIZER_UNLOCKED;
 static StaticSemaphore_t s_nand_snapshot_mutex_storage;
 static SemaphoreHandle_t s_nand_snapshot_mutex;
-static factory_nand_update_snapshot_t s_nand_snapshot;
+static EXT_RAM_BSS_ATTR factory_nand_update_snapshot_t s_nand_snapshot;
 
 static void snapshot_lock(void)
 {

@@ -23,10 +23,10 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: python tools/check_repository_layout.py
@@ -36,17 +36,19 @@ jobs:
     name: Host / ${{ matrix.os }} / Python ${{ matrix.python }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
+    env:
+      CJSON_COMPONENT_DIR: ${{ github.workspace }}/.host-deps/cjson
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-22.04, macos-15-intel, windows-2022]
         python: ["3.8", "3.12"]
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Set up GSP bootstrap Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Prepare pinned GSP host dependencies
@@ -55,7 +57,7 @@ jobs:
           python -m pip install --disable-pip-version-check -r esp-mosaico-recovery/firmware/recovery/tools/requirements.txt
           python tools/ci/prepare_gsp.py
 
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
       - name: Make MinGW compiler available
@@ -67,35 +69,32 @@ jobs:
           python -m pip install --disable-pip-version-check
           -r ESP-Iris/components/esp_iris/tools/requirements.lock
           -r ESP-Iris/components/esp_iris/tools/requirements-test.txt
+          -r esp-mosaico-recovery/tests/requirements-ui.txt
       - name: Install Recovery C test dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libssl-dev
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        if: runner.os == 'Linux'
+      - uses: actions/checkout@v7
         with:
           repository: DaveGamble/cJSON
           ref: c859b25da02955fef659d658b8f324b5cde87be3 # v1.7.19
           path: .host-deps/cjson
           persist-credentials: false
-      - name: Configure Recovery C test dependency
-        if: runner.os == 'Linux'
-        run: echo "CJSON_COMPONENT_DIR=$GITHUB_WORKSPACE/.host-deps/cjson" >> "$GITHUB_ENV"
       - name: Test ESP-Iris
         run: python -m pytest -q --ignore=tests/e2e --junitxml=iris-results.xml
         working-directory: ESP-Iris/components/esp_iris/tools
       - name: Test ESP-Mosaico Tools
         if: runner.os != 'Windows'
-        run: python -m pytest -q esp-mosaico-recovery/tests --junitxml=tools-results.xml
+        run: python -m pytest -q mosaico-tools/tests esp-mosaico-recovery/tests --junitxml=tools-results.xml
       - name: Test ESP-Mosaico Tools on Windows
         if: runner.os == 'Windows'
         run: >-
-          python -m pytest -q esp-mosaico-recovery/tests
+          python -m pytest -q mosaico-tools/tests esp-mosaico-recovery/tests
           --deselect=esp-mosaico-recovery/tests/test_cli.py::GatewayTests::test_local_system_update_builds_and_submits_atomic_bundle
           --deselect=esp-mosaico-recovery/tests/test_cli.py::HostCompatibilityTests::test_idf_environment_uses_idf_python_without_a_shell
           --deselect=esp-mosaico-recovery/tests/test_cli.py::HostCompatibilityTests::test_python38_runtime_hands_idf_to_a_newer_python
           --deselect=esp-mosaico-recovery/tests/test_cli.py::RecoveryCommandTests::test_idf_wrapper_reports_bounded_cmake_diagnostic
           --junitxml=tools-results.xml
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: host-${{ matrix.os }}-python-${{ matrix.python }}
@@ -109,10 +108,10 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: >-
@@ -139,17 +138,17 @@ jobs:
       ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
       UBSAN_OPTIONS: halt_on_error=1
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: python -m pip install --disable-pip-version-check -r ESP-Iris/components/esp_iris/tools/requirements-test.txt
       - name: Install Recovery C test dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libssl-dev
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@v7
         if: runner.os == 'Linux'
         with:
           repository: DaveGamble/cJSON
@@ -159,7 +158,7 @@ jobs:
       - name: Configure Recovery C test dependency
         if: runner.os == 'Linux'
         run: echo "CJSON_COMPONENT_DIR=$GITHUB_WORKSPACE/.host-deps/cjson" >> "$GITHUB_ENV"
-      - run: python -m pytest -q esp-mosaico-recovery/tests/test_bridge_host.py
+      - run: python -m pytest -q mosaico-tools/tests esp-mosaico-recovery/tests/test_bridge_host.py
       - run: python -m pytest -q tests/test_firmware_runtime.py tests/test_file_service_lifecycle.py
         working-directory: ESP-Iris/components/esp_iris/tools
 
@@ -167,10 +166,10 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
           cache: npm
@@ -206,13 +205,13 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@v7
         with:
           node-version: "22"
       - run: python -m pip install --disable-pip-version-check -r ESP-Iris/components/esp_iris/tools/requirements.lock
@@ -229,15 +228,42 @@ jobs:
 
   firmware:
     runs-on: ubuntu-22.04
-    timeout-minutes: 120
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [baseline, media, ota, system]
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_MAXSIZE: 750M
+      IDF_CCACHE_ENABLE: "1"
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - name: Restore ESP-IDF tools
+        uses: actions/cache@v6
+        with:
+          path: .idf/tools
+          key: firmware-idf-tools-${{ runner.os }}-${{ env.ESP_IDF_REVISION }}
+      - name: Restore compiler cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: firmware-ccache-${{ runner.os }}-${{ env.ESP_IDF_REVISION }}-${{ matrix.group }}-${{ github.sha }}
+          restore-keys: |
+            firmware-ccache-${{ runner.os }}-${{ env.ESP_IDF_REVISION }}-${{ matrix.group }}-
+      - name: Restore pinned Recovery components
+        if: matrix.group == 'system'
+        uses: actions/cache@v6
+        with:
+          path: esp-mosaico-recovery/firmware/recovery/managed_components
+          key: firmware-recovery-components-${{ runner.os }}-${{ hashFiles('esp-mosaico-recovery/firmware/recovery/dependencies.lock') }}
+      - uses: actions/checkout@v7
         with:
           repository: espressif/esp-idf
           ref: ${{ env.ESP_IDF_REVISION }}
@@ -248,25 +274,35 @@ jobs:
         shell: bash
         run: |
           export IDF_PATH="$GITHUB_WORKSPACE/.idf/esp-idf"
-          export IDF_TOOLS_PATH="$RUNNER_TEMP/espressif"
+          export IDF_TOOLS_PATH="$GITHUB_WORKSPACE/.idf/tools"
           "$IDF_PATH/install.sh" all
           echo "IDF_PATH=$IDF_PATH" >> "$GITHUB_ENV"
           echo "IDF_TOOLS_PATH=$IDF_TOOLS_PATH" >> "$GITHUB_ENV"
+      - name: Verify compiler cache
+        shell: bash
+        run: |
+          if ! command -v ccache >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install --yes ccache
+          fi
+          ccache --version
       - name: Prepare pinned Recovery GSP compiler
         run: |
           python -m pip install --disable-pip-version-check esp-gsp-tools==0.1.1
           python tools/ci/prepare_gsp.py --compiler-only
 
-      - name: Build ESP-Iris matrix and Recovery
+      - name: Build firmware (${{ matrix.group }})
         shell: bash
         run: |
           source "$IDF_PATH/export.sh"
           python -m pip install --disable-pip-version-check -r esp-mosaico-recovery/firmware/recovery/tools/requirements.txt
-          bash tools/ci/build_firmware.sh
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+          ccache --zero-stats
+          bash tools/ci/build_firmware.sh "${{ matrix.group }}"
+          ccache --show-stats
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: firmware-results
+          name: firmware-results-${{ matrix.group }}
           path: |
             ESP-Iris/build-ci-*/*.bin
             ESP-Iris/build-ci-*/*.elf

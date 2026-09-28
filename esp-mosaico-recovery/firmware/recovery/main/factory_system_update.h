@@ -6,6 +6,7 @@
 
 #include "esp_err.h"
 #include "esp_iris_system_update.h"
+#include "cJSON.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,6 +25,10 @@ typedef enum {
 typedef struct {
     factory_system_update_owner_t owner;
     esp_iris_system_update_status_t update;
+    /* Local, lock-consistent payload totals; includes the active component. */
+    uint64_t total_size;
+    uint64_t received_size;
+    uint64_t completed_size;
 } factory_system_update_status_t;
 
 /* Register the Recovery-resident, product-owned Flash-policy backend.
@@ -53,6 +58,15 @@ esp_err_t factory_system_update_source_prepare(
     factory_system_update_owner_t owner,
     const uint8_t *manifest, size_t manifest_size,
     const uint8_t operation_id[ESP_IRIS_SYSTEM_OPERATION_ID_BYTES]);
+/* Dedicated Bridge entrypoint for an already-parsed manifest. This avoids a
+ * serialize/reparse cycle while retaining the shared backend policy. The
+ * allow_bootloader flag is trusted local firmware policy; it must never come
+ * from a remote manifest or transport parameter. The generic source API
+ * continues to reject Bridge bootloader replacement. */
+esp_err_t factory_system_update_source_prepare_bridge(
+    const cJSON *manifest,
+    const uint8_t operation_id[ESP_IRIS_SYSTEM_OPERATION_ID_BYTES],
+    bool allow_bootloader);
 size_t factory_system_update_source_component_count(
     factory_system_update_owner_t owner);
 esp_err_t factory_system_update_source_component(

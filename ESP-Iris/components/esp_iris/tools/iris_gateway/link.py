@@ -274,3 +274,7 @@ class EndpointLock:
 
             fcntl.flock(self._file.fileno(), fcntl.LOCK_UN)
         self._file.close()
+
+    def fileno(self) -> int:
+        """Allow a supervised POSIX writer to retain this lock if its parent dies."""
+        return self._file.fileno()

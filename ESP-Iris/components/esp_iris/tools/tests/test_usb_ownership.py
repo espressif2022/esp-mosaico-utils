@@ -12,7 +12,6 @@ from iris_gateway.cli import _web, build_parser
 from iris_gateway.gateway import GatewayService
 from iris_gateway.hub import IrisHub
 from iris_gateway.link import EndpointLock, SerialLink
-from iris_gateway.security import Actor
 from iris_gateway.store import GatewayStore
 
 
@@ -55,7 +54,7 @@ def usb(tmp_path, monkeypatch):
     return port
 
 
-def test_abort_unmanaged_jtag_does_not_adopt_port(tmp_path, usb):
+def test_finished_unmanaged_jtag_does_not_adopt_port(tmp_path, usb):
     async def scenario():
         usb.pid = 0x1001
         usb.product = "USB JTAG/serial debug unit"
@@ -65,17 +64,9 @@ def test_abort_unmanaged_jtag_does_not_adopt_port(tmp_path, usb):
         service.attach_hub(hub)
         try:
             with patch.object(SerialLink, "open") as opened:
-                lease = await service.acquire_endpoint_maintenance(
-                    usb.device,
-                    Actor("developer", "test"),
-                    purpose="probe",
-                    expected_version="0.1",
-                    wait_timeout=1,
-                    ttl_seconds=30,
-                )
-                await service.finish_maintenance(
-                    lease["lease_id"], lease["token"], abort=True, timeout=1
-                )
+                endpoint = await hub.detach_for_host(usb.device)
+                hub.yield_host_lock(endpoint["endpoint"])
+                await hub.resume_after_host(endpoint["endpoint"])
                 await asyncio.sleep(0.01)
                 opened.assert_not_called()
                 assert not hub._locks
@@ -115,7 +106,7 @@ def test_reconnect_filters_replacement_jtag_and_can_return_to_iris(usb):
     asyncio.run(scenario())
 
 
-def test_alias_cannot_bypass_other_gateway_maintenance_lock(tmp_path, usb):
+def test_alias_cannot_bypass_other_gateway_host_operation_lock(tmp_path, usb):
     async def scenario():
         first = IrisHub("A")
         second = IrisHub("B")
@@ -124,7 +115,7 @@ def test_alias_cannot_bypass_other_gateway_maintenance_lock(tmp_path, usb):
         try:
             with patch.object(SerialLink, "open") as opened:
                 await first.add_usb(usb.device)
-                await first.quiesce_endpoint(usb.device)
+                await first.detach_for_host(usb.device)
                 opened.reset_mock()
                 await second.add_usb(str(alias))
                 await until(lambda: second.list_endpoints()[0]["state"] == "owned_elsewhere")
@@ -159,15 +150,9 @@ def test_disconnected_device_identity_is_not_new_board_identity(tmp_path, usb):
             await until(lambda: bool(hub.list_devices()))
             await old.incoming.put(b"")
             await until(lambda: not hub.list_devices())
-            lease = await service.acquire_endpoint_maintenance(
-                usb.device,
-                Actor("developer", "test"),
-                purpose="recover",
-                expected_version="0.1",
-                wait_timeout=1,
-                ttl_seconds=30,
-            )
-            assert lease["evidence"]["expected_device_id"] is None
+            endpoint_state = hub.host_endpoint(usb.device)
+            assert endpoint_state.get("device_id") is None
+
         finally:
             await hub.close()
             store.close()
@@ -225,22 +210,6 @@ def test_second_gateway_cannot_mutate_active_operations(tmp_path, usb):
     asyncio.run(scenario())
 
 
-def test_legacy_unmanaged_lease_abort_releases_without_opening(usb):
-    async def scenario():
-        hub = IrisHub("A")
-        endpoint = "usb:location=review:1.0"
-        try:
-            with patch.object(SerialLink, "open") as opened:
-                hub.reserve_maintenance_endpoint(
-                    {"endpoint": endpoint, "path": usb.device}
-                )
-                await hub.resume_maintenance_endpoint(endpoint, restore_only=True)
-                opened.assert_not_called()
-                assert not hub._locks
-        finally:
-            await hub.close()
-
-    asyncio.run(scenario())
 
 
 def test_reused_tty_name_does_not_select_previous_socket(usb):
@@ -252,52 +221,13 @@ def test_reused_tty_name_does_not_select_previous_socket(usb):
         "device_id": "old-device",
         "state": "retrying",
     }
-    current = hub.maintenance_endpoint(usb.device)
+    current = hub.host_endpoint(usb.device)
     assert current["endpoint"] == "usb:location=review:1.0"
     assert current["device_id"] is None
 
 
-def test_restored_managed_lease_keeps_canonical_lock_and_rechecks_usb(usb):
-    async def scenario():
-        hub = IrisHub("A", reconnect_min_seconds=0.001)
-        usb.pid = 0x1001
-        usb.product = "USB JTAG/serial debug unit"
-        endpoint = "usb:location=review:1.0"
-        try:
-            with patch.object(SerialLink, "open") as opened:
-                hub.reserve_maintenance_endpoint(
-                    {
-                        "endpoint": endpoint,
-                        "path": usb.device,
-                        "resume_after_maintenance": True,
-                        "allow_serial_jtag": False,
-                    }
-                )
-                await hub.resume_maintenance_endpoint(endpoint, restore_only=True)
-                await until(lambda: hub.list_endpoints()[0]["attempt"] >= 2)
-                opened.assert_not_called()
-        finally:
-            await hub.close()
-
-    asyncio.run(scenario())
 
 
-def test_legacy_alias_lease_blocks_new_gateway_canonical_key(usb):
-    async def scenario():
-        first, second = IrisHub("A"), IrisHub("B")
-        try:
-            first.reserve_maintenance_endpoint(
-                {"endpoint": "usb:" + usb.device, "path": usb.device}
-            )
-            with patch.object(SerialLink, "open") as opened:
-                await second.add_usb(usb.device)
-                await until(lambda: second.list_endpoints()[0]["state"] == "owned_elsewhere")
-                opened.assert_not_called()
-        finally:
-            await second.close()
-            await first.close()
-
-    asyncio.run(scenario())
 
 
 def test_com_alias_lock_key_is_independent_of_workspace(tmp_path, monkeypatch):

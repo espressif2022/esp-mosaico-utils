@@ -98,7 +98,7 @@ def resolve_project(
         return user_path(candidates[0])
     if not candidates:
         raise SelectionError(
-            "No application project was found. Specify one with --project PATH; "
+            "No application project was found. Run `python mosaico.py project init my_app` first, or specify --project PATH; "
             "the recovery-owned Recovery project is never selected automatically."
         )
     raise SelectionError(

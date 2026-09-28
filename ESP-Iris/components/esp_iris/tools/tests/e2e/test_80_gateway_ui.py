@@ -234,10 +234,10 @@ def test_cli_tls_auth_websocket_workbench_and_final_smoke(
                 gateway.base_url,
                 "--insecure",
                 "--json",
-                "ota-status",
+                "operation-status",
                 "missing-operation",
             ],
-            log_name="cli-ota-status-error.log",
+            log_name="cli-operation-status-error.log",
             check=False,
             env={"ESP_IRIS_AGENT_TOKEN": agent_token},
         )

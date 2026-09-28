@@ -98,8 +98,8 @@ the Console because command output and audit metadata are retained.
 ```bash
 python3 common_components/esp_iris/tools/esp_iris.py ctl --json ota \
   DEVICE_ID build/application.bin
-python3 common_components/esp_iris/tools/esp_iris.py ctl --json ota-status OPERATION_ID
-python3 common_components/esp_iris/tools/esp_iris.py ctl --json ota-watch OPERATION_ID
+python3 common_components/esp_iris/tools/esp_iris.py ctl --json operation-status OPERATION_ID
+python3 common_components/esp_iris/tools/esp_iris.py ctl --json operation-watch OPERATION_ID
 ```
 
 The CLI archives the matching BIN, ELF and map under the verified ELF SHA, and

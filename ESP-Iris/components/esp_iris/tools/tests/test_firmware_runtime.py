@@ -16,8 +16,9 @@ HOST = Path(__file__).parent / "runtime_host"
                                             "ota-large", "system-update-large"])
 @pytest.mark.parametrize("multi_transport", [False, True])
 @pytest.mark.parametrize("persistent", [False, True])
+@pytest.mark.parametrize("tick_rate_hz", [100, 1000])
 def test_firmware_runtime(tmp_path: Path, multi_transport: bool, service_profile: str,
-                          persistent: bool) -> None:
+                          persistent: bool, tick_rate_hz: int) -> None:
     compiler = shutil.which("cc")
     if compiler is None:
         if os.environ.get("IRIS_HOST_SANITIZERS") == "1" or os.environ.get("IRIS_REQUIRE_HOST_CC") == "1":
@@ -25,6 +26,7 @@ def test_firmware_runtime(tmp_path: Path, multi_transport: bool, service_profile
         pytest.skip("C compiler required for production firmware regression tests")
     output = tmp_path / ("runtime.exe" if os.name == "nt" else "runtime")
     flags = ["-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Wextra", "-Werror", "-Wno-unused-parameter"]
+    flags += [f"-DconfigTICK_RATE_HZ={tick_rate_hz}"]
     if os.environ.get("IRIS_HOST_SANITIZERS") == "1":
         flags += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-g"]
     if service_profile in {"ota", "system-update", "ota-large", "system-update-large"}:

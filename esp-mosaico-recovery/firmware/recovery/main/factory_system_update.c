@@ -1,3 +1,4 @@
+#include "esp_attr.h"
 #include "factory_system_update.h"
 #include "factory_recovery_version.h"
 
@@ -55,7 +56,7 @@ typedef struct {
 
 typedef struct {
     bool prepared;
-    factory_update_plan_component_t plan[FACTORY_SYSTEM_MAX_COMPONENTS];
+    factory_update_plan_component_t *plan;
     size_t plan_count;
     int active_index;
     uint32_t received;
@@ -74,7 +75,11 @@ typedef struct {
 } factory_update_state_t;
 
 static const char *TAG = "factory_sysupdate";
+/* Keep the zero-filled plan in BSS: active_index's nonzero initializer would
+ * otherwise store the entire array in the fixed Recovery flash slot. */
+static EXT_RAM_BSS_ATTR factory_update_plan_component_t s_update_plan[FACTORY_SYSTEM_MAX_COMPONENTS];
 static factory_update_state_t s_update = {
+    .plan = s_update_plan,
     .active_index = -1,
 };
 static factory_system_update_owner_t s_owner =
@@ -119,7 +124,7 @@ static bool update_owner_is(factory_system_update_owner_t owner)
 static void update_status_start(
     factory_system_update_owner_t owner,
     const uint8_t operation_id[ESP_IRIS_SYSTEM_OPERATION_ID_BYTES],
-    size_t component_count)
+    size_t component_count, uint64_t total_size)
 {
     taskENTER_CRITICAL(&s_state_lock);
     memset(&s_status, 0, sizeof(s_status));
@@ -128,6 +133,7 @@ static void update_status_start(
            sizeof(s_status.update.operation_id));
     s_status.update.phase = ESP_IRIS_SYSTEM_UPDATE_PHASE_PREPARED;
     s_status.update.component_count = (uint8_t)component_count;
+    s_status.total_size = total_size;
     s_status.update.result = ESP_OK;
     taskEXIT_CRITICAL(&s_state_lock);
 }
@@ -153,6 +159,7 @@ static void update_status_component(uint8_t component_id, uint32_t received,
     taskENTER_CRITICAL(&s_state_lock);
     s_status.update.active_component_id = component_id;
     s_status.update.component_received = received;
+    s_status.received_size = s_status.completed_size + received;
     s_status.update.component_size = size;
     s_status.update.phase = phase;
     taskEXIT_CRITICAL(&s_state_lock);
@@ -162,6 +169,7 @@ static void update_status_component_complete(void)
 {
     taskENTER_CRITICAL(&s_state_lock);
     ++s_status.update.completed_components;
+    s_status.completed_size = s_status.received_size;
     s_status.update.active_component_id = 0;
     s_status.update.phase =
         ESP_IRIS_SYSTEM_UPDATE_PHASE_COMPONENT_VERIFIED;
@@ -300,7 +308,7 @@ static void update_state_reset(void)
     s_update.active_partition = NULL;
     s_update.application_received = false;
     s_update.recovery_update = false;
-    memset(s_update.plan, 0, sizeof(s_update.plan));
+    memset(s_update.plan, 0, sizeof(s_update_plan));
     memset(s_update.operation_id, 0, sizeof(s_update.operation_id));
     memset(s_update.target_layout_sha256, 0,
            sizeof(s_update.target_layout_sha256));
@@ -460,23 +468,9 @@ static esp_err_t parse_component(const cJSON *item,
 
 static esp_err_t validate_partition_table(const uint8_t *image);
 
-static esp_err_t parse_manifest_json(
-    const esp_iris_system_update_manifest_t *manifest)
+static esp_err_t parse_manifest_root(
+    const cJSON *root, uint8_t component_count, bool allow_bridge_bootloader)
 {
-    char *json = malloc(manifest->manifest_size + 1U);
-    ESP_RETURN_ON_FALSE(json != NULL, ESP_ERR_NO_MEM, TAG,
-                        "allocate manifest");
-    memcpy(json, manifest->manifest, manifest->manifest_size);
-    json[manifest->manifest_size] = '\0';
-    const char *parse_end = NULL;
-    cJSON *root = cJSON_ParseWithLengthOpts(
-        json, manifest->manifest_size + 1U, &parse_end, true);
-    if (root == NULL || parse_end != json + manifest->manifest_size) {
-        cJSON_Delete(root);
-        free(json);
-        return ESP_ERR_INVALID_ARG;
-    }
-
     esp_err_t err = ESP_OK;
     const char *schema = NULL;
     uint32_t chip_id = 0;
@@ -496,9 +490,9 @@ static esp_err_t parse_manifest_json(
         json_uint32(target, "flash_size", UINT32_MAX, &flash_size) != ESP_OK ||
         esp_flash_get_size(NULL, &actual_flash_size) != ESP_OK ||
         flash_size != actual_flash_size || !cJSON_IsArray(components) ||
-        cJSON_GetArraySize(components) != manifest->component_count ||
-        manifest->component_count == 0 ||
-        manifest->component_count > FACTORY_SYSTEM_MAX_COMPONENTS) {
+        cJSON_GetArraySize(components) != component_count ||
+        component_count == 0 ||
+        component_count > FACTORY_SYSTEM_MAX_COMPONENTS) {
         err = ESP_ERR_INVALID_ARG;
         goto done;
     }
@@ -540,7 +534,7 @@ static esp_err_t parse_manifest_json(
             err = err == ESP_OK ? ESP_ERR_INVALID_ARG : err;
             goto done;
         }
-        if (s_update.remote_bridge &&
+        if (s_update.remote_bridge && !allow_bridge_bootloader &&
             plan->descriptor.kind == ESP_IRIS_SYSTEM_UPDATE_COMPONENT_BOOTLOADER) {
             err = ESP_ERR_NOT_SUPPORTED;
             goto done;
@@ -563,6 +557,12 @@ static esp_err_t parse_manifest_json(
         }
         seen_kinds[plan->descriptor.kind] = true;
         ++s_update.plan_count;
+    }
+    /* Bootloader replacement always carries its matching partition table. */
+    if (seen_kinds[ESP_IRIS_SYSTEM_UPDATE_COMPONENT_BOOTLOADER] &&
+        !seen_kinds[ESP_IRIS_SYSTEM_UPDATE_COMPONENT_PARTITION_TABLE]) {
+        err = ESP_ERR_INVALID_ARG;
+        goto done;
     }
     s_update.recovery_update =
         seen_kinds[ESP_IRIS_SYSTEM_UPDATE_COMPONENT_RECOVERY];
@@ -644,6 +644,25 @@ static esp_err_t parse_manifest_json(
     }
 
 done:
+    return err;
+}
+
+static esp_err_t parse_manifest_json(
+    const esp_iris_system_update_manifest_t *manifest, bool allow_bridge_bootloader)
+{
+    char *json = malloc(manifest->manifest_size + 1U);
+    ESP_RETURN_ON_FALSE(json != NULL, ESP_ERR_NO_MEM, TAG,
+                        "allocate manifest");
+    memcpy(json, manifest->manifest, manifest->manifest_size);
+    json[manifest->manifest_size] = '\0';
+    const char *parse_end = NULL;
+    cJSON *root = cJSON_ParseWithLengthOpts(
+        json, manifest->manifest_size + 1U, &parse_end, true);
+    esp_err_t err = ESP_ERR_INVALID_ARG;
+    if (root != NULL && parse_end == json + manifest->manifest_size) {
+        err = parse_manifest_root(root, manifest->component_count,
+                                  allow_bridge_bootloader);
+    }
     cJSON_Delete(root);
     free(json);
     return err;
@@ -651,10 +670,12 @@ done:
 
 static esp_err_t prepare_update_owned(
     const esp_iris_system_update_manifest_t *manifest,
-    factory_system_update_owner_t owner)
+    const cJSON *parsed_root,
+    factory_system_update_owner_t owner, bool allow_bridge_bootloader)
 {
-    if (manifest == NULL || manifest->manifest == NULL ||
-        manifest->manifest_size == 0 ||
+    if (manifest == NULL ||
+        (parsed_root == NULL &&
+         (manifest->manifest == NULL || manifest->manifest_size == 0)) ||
         !operation_id_valid(manifest->operation_id)) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -679,7 +700,10 @@ static esp_err_t prepare_update_owned(
         update_owner_release();
         return ESP_ERR_INVALID_ARG;
     }
-    const esp_err_t parse_err = parse_manifest_json(manifest);
+    const esp_err_t parse_err = parsed_root != NULL
+        ? parse_manifest_root(parsed_root, manifest->component_count,
+                              allow_bridge_bootloader)
+        : parse_manifest_json(manifest, allow_bridge_bootloader);
     if (parse_err != ESP_OK) {
         update_status_finish(ESP_IRIS_SYSTEM_UPDATE_PHASE_FAILED, parse_err);
         update_state_reset();
@@ -689,7 +713,10 @@ static esp_err_t prepare_update_owned(
     memcpy(s_update.operation_id, manifest->operation_id,
            sizeof(s_update.operation_id));
     s_update.prepared = true;
-    update_status_start(owner, manifest->operation_id, s_update.plan_count);
+    uint64_t total_size = 0;
+    for (size_t i = 0; i < s_update.plan_count; ++i)
+        total_size += s_update.plan[i].descriptor.size;
+    update_status_start(owner, manifest->operation_id, s_update.plan_count, total_size);
     ESP_LOGW(TAG, "accepted unsigned system plan with %u component(s)",
              (unsigned)s_update.plan_count);
     return ESP_OK;
@@ -700,7 +727,8 @@ static esp_err_t prepare_update(
 {
     (void)user_ctx;
     return prepare_update_owned(manifest,
-                                FACTORY_SYSTEM_UPDATE_OWNER_ESP_IRIS);
+                                NULL,
+                                FACTORY_SYSTEM_UPDATE_OWNER_ESP_IRIS, false);
 }
 
 static int find_plan_component(
@@ -740,10 +768,8 @@ static esp_err_t begin_component(
                             ESP_ERR_NOT_FOUND, TAG, "application target missing");
         s_update.active_partition = &plan->target_partition;
         const size_t erase_size =
-            s_update.remote_bridge
-                ? s_update.active_partition->size
-                : (component->size + FACTORY_SYSTEM_FLASH_SECTOR_BYTES - 1U) &
-                      ~(FACTORY_SYSTEM_FLASH_SECTOR_BYTES - 1U);
+            (component->size + FACTORY_SYSTEM_FLASH_SECTOR_BYTES - 1U) &
+            ~(FACTORY_SYSTEM_FLASH_SECTOR_BYTES - 1U);
         ESP_LOGI(TAG,
                  "erasing application before receive: offset=0x%08" PRIx32 " size=%u",
                  s_update.active_partition->address, (unsigned)erase_size);
@@ -1003,6 +1029,16 @@ static bool partition_entry_is_immutable(
     return false;
 }
 
+static bool partition_entry_requires_remote_layout_image(
+    const esp_partition_info_t *entry)
+{
+    /* Omitted data may be unused or initialized by the application. Do not
+     * synthesize erases/writes; only supplied components own write ranges.
+     * Applications still need verified images when replacing the layout. */
+    return entry->pos.offset >= 0x200000U &&
+           entry->type == ESP_PARTITION_TYPE_APP;
+}
+
 static const esp_partition_info_t *find_partition_entry_at_offset(
     const esp_partition_info_t *entries, int count, uint32_t offset)
 {
@@ -1210,7 +1246,7 @@ static esp_err_t validate_partition_table(const uint8_t *image)
     if (s_update.remote_bridge && !s_update.preserve_layout) {
         for (int i = 0; i < target_count; ++i) {
             if (target_entries[i].magic != ESP_PARTITION_MAGIC ||
-                target_entries[i].pos.offset < 0x200000U)
+                !partition_entry_requires_remote_layout_image(&target_entries[i]))
                 continue;
             bool supplied = false;
             for (size_t j = 0; j < s_update.plan_count; ++j)
@@ -1598,10 +1634,11 @@ esp_err_t factory_system_update_source_reserve(
     return ESP_OK;
 }
 
-esp_err_t factory_system_update_source_prepare(
+static esp_err_t source_prepare(
     factory_system_update_owner_t owner,
     const uint8_t *manifest, size_t manifest_size,
-    const uint8_t operation_id[ESP_IRIS_SYSTEM_OPERATION_ID_BYTES])
+    const uint8_t operation_id[ESP_IRIS_SYSTEM_OPERATION_ID_BYTES],
+    bool allow_bridge_bootloader)
 {
     ESP_RETURN_ON_FALSE(manifest != NULL && manifest_size > 0 &&
                             manifest_size <= FACTORY_SOURCE_MANIFEST_BYTES &&
@@ -1612,17 +1649,22 @@ esp_err_t factory_system_update_source_prepare(
                         TAG,
                         "local operation ID is zero");
 
-    cJSON *root = cJSON_ParseWithLength((const char *)manifest,
-                                        manifest_size);
-    ESP_RETURN_ON_FALSE(root != NULL, ESP_ERR_INVALID_ARG, TAG,
-                        "parse local update manifest");
+    const char *parse_end = NULL;
+    cJSON *root = cJSON_ParseWithLengthOpts(
+        (const char *)manifest, manifest_size, &parse_end, false);
+    if (root == NULL ||
+        parse_end != (const char *)manifest + manifest_size) {
+        cJSON_Delete(root);
+        return ESP_ERR_INVALID_ARG;
+    }
     const cJSON *components = json_member(root, "components");
     const int component_count = cJSON_IsArray(components)
         ? cJSON_GetArraySize(components) : 0;
-    cJSON_Delete(root);
-    ESP_RETURN_ON_FALSE(component_count > 0 &&
-                            component_count <= FACTORY_SYSTEM_MAX_COMPONENTS,
-                        ESP_ERR_INVALID_SIZE, TAG, "local component count");
+    if (component_count <= 0 ||
+        component_count > FACTORY_SYSTEM_MAX_COMPONENTS) {
+        cJSON_Delete(root);
+        return ESP_ERR_INVALID_SIZE;
+    }
 
     esp_iris_system_update_manifest_t descriptor = {
         .manifest = manifest,
@@ -1633,13 +1675,46 @@ esp_err_t factory_system_update_source_prepare(
     };
     memcpy(descriptor.operation_id, operation_id,
            sizeof(descriptor.operation_id));
-    ESP_RETURN_ON_ERROR(hash_memory(manifest, manifest_size,
-                                    descriptor.manifest_sha256),
-                        TAG, "hash local update manifest");
-    ESP_RETURN_ON_FALSE(owner == FACTORY_SYSTEM_UPDATE_OWNER_BRIDGE ||
-                            owner == FACTORY_SYSTEM_UPDATE_OWNER_NAND,
-                        ESP_ERR_INVALID_ARG, TAG, "invalid system-update source owner");
-    return prepare_update_owned(&descriptor, owner);
+    if (owner != FACTORY_SYSTEM_UPDATE_OWNER_BRIDGE &&
+        owner != FACTORY_SYSTEM_UPDATE_OWNER_NAND) {
+        cJSON_Delete(root);
+        return ESP_ERR_INVALID_ARG;
+    }
+    esp_err_t err = prepare_update_owned(&descriptor, root, owner,
+                                         allow_bridge_bootloader);
+    cJSON_Delete(root);
+    return err;
+}
+
+esp_err_t factory_system_update_source_prepare(
+    factory_system_update_owner_t owner,
+    const uint8_t *manifest, size_t manifest_size,
+    const uint8_t operation_id[ESP_IRIS_SYSTEM_OPERATION_ID_BYTES])
+{
+    return source_prepare(owner, manifest, manifest_size, operation_id, false);
+}
+
+esp_err_t factory_system_update_source_prepare_bridge(
+    const cJSON *manifest,
+    const uint8_t operation_id[ESP_IRIS_SYSTEM_OPERATION_ID_BYTES],
+    bool allow_bootloader)
+{
+    /* Local product policy, never populated from manifest JSON. */
+    const cJSON *components = json_member(manifest, "components");
+    const int component_count = cJSON_IsArray(components)
+        ? cJSON_GetArraySize(components) : 0;
+    ESP_RETURN_ON_FALSE(component_count > 0 &&
+                            component_count <= FACTORY_SYSTEM_MAX_COMPONENTS &&
+                            operation_id != NULL,
+                        ESP_ERR_INVALID_SIZE, TAG, "Bridge component count");
+    esp_iris_system_update_manifest_t descriptor = {
+        .component_count = (uint8_t)component_count,
+    };
+    memcpy(descriptor.operation_id, operation_id,
+           sizeof(descriptor.operation_id));
+    return prepare_update_owned(&descriptor, manifest,
+                                FACTORY_SYSTEM_UPDATE_OWNER_BRIDGE,
+                                allow_bootloader);
 }
 
 size_t factory_system_update_source_component_count(
@@ -1775,6 +1850,17 @@ esp_err_t factory_system_update_source_prepare(
     (void)manifest;
     (void)manifest_size;
     (void)operation_id;
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+esp_err_t factory_system_update_source_prepare_bridge(
+    const cJSON *manifest,
+    const uint8_t operation_id[ESP_IRIS_SYSTEM_OPERATION_ID_BYTES],
+    bool allow_bootloader)
+{
+    (void)manifest;
+    (void)operation_id;
+    (void)allow_bootloader;
     return ESP_ERR_NOT_SUPPORTED;
 }
 

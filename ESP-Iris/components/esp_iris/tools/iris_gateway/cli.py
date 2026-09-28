@@ -29,7 +29,7 @@ from aiohttp import (
 
 from . import __version__
 from .client_lifecycle import CAPABILITY as LIFECYCLE_CAPABILITY
-from .compat import BooleanOptionalAction, remove_prefix
+from .compat import BooleanOptionalAction
 from .compatibility import compatibility_expectation
 from .demo import DemoHub
 from .discovery import discover_iris_usb_devices
@@ -109,7 +109,7 @@ def _recover_interrupted(store: GatewayStore) -> None:
     ).fetchall()
     for row in rows:
         uncertain = str(row["action"]).startswith(
-            ("rpc.", "device.restart", "firmware.ota", "firmware.system_update")
+            ("rpc.", "device.restart", "firmware.ota", "firmware.system_update", "host.recovery")
         )
         store.update_operation(
             row["operation_id"],
@@ -187,8 +187,6 @@ async def _web_owned(args: argparse.Namespace, state_dir: pathlib.Path) -> None:
         if args.demo:
             await hub.start()
         else:
-            for lease in store.active_maintenance_leases():
-                hub.reserve_maintenance_endpoint(dict(lease["endpoint"]))
             for endpoint in args.tcp:
                 host, port = _tcp_endpoint(endpoint)
                 await hub.add_tcp(host, port, pairing_token=args.pairing_token)
@@ -318,7 +316,7 @@ async def _web_owned(args: argparse.Namespace, state_dir: pathlib.Path) -> None:
                     connection = pathlib.Path(args.project_connection_file)
                     if json.loads(connection.read_text()).get("session_id") == project_session_id:
                         connection.unlink()
-            registry.close(clean=not store.active_maintenance_leases() and not service.project.drain_timed_out)
+            registry.close(clean=not service.project.drain_timed_out)
         store.add_audit(
             "system", "gateway", "gateway.stopped", {"instance_id": args.instance_id}
         )
@@ -512,8 +510,8 @@ async def _ctl(args: argparse.Namespace) -> int:
                     base + f"/v1/operations/{args.operation_id}/reconcile", ssl=ssl_value
                 ) as response:
                     _output(await _response_json(response), args.json)
-            elif command in ("ota-status", "ota-watch"):
-                if command == "ota-watch":
+            elif command in ("operation-status", "operation-watch"):
+                if command == "operation-watch":
                     result = await _operation_watch(
                         session,
                         base,
@@ -527,61 +525,16 @@ async def _ctl(args: argparse.Namespace) -> int:
                         base + f"/v1/operations/{args.operation_id}", ssl=ssl_value
                     ) as response:
                         _output(await _response_json(response), args.json)
-            elif command == "maintenance-acquire":
-                url = base + f"/v1/devices/{args.device}/maintenance-leases"
-                async with session.post(
-                    url,
-                    json={
-                        "purpose": "recovery",
-                        "expected_version": args.expected_version,
-                        "wait_timeout": args.wait_timeout,
-                        "ttl_seconds": args.ttl_seconds,
-                    },
-                    ssl=ssl_value,
-                ) as response:
-                    _output(await _response_json(response), args.json)
-            elif command == "maintenance-acquire-endpoint":
-                url = base + "/v1/maintenance-endpoints/leases"
-                async with session.post(
-                    url,
-                    json={
-                        "endpoint": args.endpoint,
-                        "purpose": "recovery",
-                        "expected_version": args.expected_version,
-                        "wait_timeout": args.wait_timeout,
-                        "ttl_seconds": args.ttl_seconds,
-                    },
-                    ssl=ssl_value,
-                ) as response:
-                    _output(await _response_json(response), args.json)
-            elif command == "maintenance-status":
-                url = base + f"/v1/maintenance-leases/{args.lease_id}"
-                async with session.get(url, ssl=ssl_value) as response:
-                    _output(await _response_json(response), args.json)
-            elif command in {
-                "maintenance-renew",
-                "maintenance-complete",
-                "maintenance-abort",
-            }:
-                token = os.environ.get("ESP_IRIS_MAINTENANCE_TOKEN", "")
-                if not token:
-                    raise RuntimeError("ESP_IRIS_MAINTENANCE_TOKEN is required")
-                action = remove_prefix(command, "maintenance-")
-                url = base + f"/v1/maintenance-leases/{args.lease_id}/{action}"
-                body = (
-                    {"ttl_seconds": args.ttl_seconds}
-                    if command == "maintenance-renew"
-                    else {"timeout": args.timeout}
-                    if command == "maintenance-complete"
-                    else {}
-                )
-                async with session.post(
-                    url,
-                    json=body,
-                    headers={"X-Maintenance-Token": token},
-                    ssl=ssl_value,
-                ) as response:
-                    _output(await _response_json(response), args.json)
+            elif command == "host-operation":
+                from .host_worker import publish_request
+                spec = json.loads(pathlib.Path(args.request_file).read_text(encoding="utf-8"))
+                request_id = publish_request(spec)
+                url = base + "/v1/host-operations"
+                try:
+                    async with session.post(url, json={"request_id": request_id}, ssl=ssl_value) as response:
+                        _output(await _response_json(response), args.json)
+                except Exception as exc:
+                    raise RuntimeError(f"host operation {request_id}: {exc}; inspect this operation ID before retrying") from exc
             elif command == "crash":
                 url = base + f"/v1/devices/{args.device}/crashes"
                 async with session.get(url, ssl=ssl_value) as response:
@@ -1035,33 +988,14 @@ def build_parser() -> argparse.ArgumentParser:
     firmware_add.add_argument("image")
     firmware_add.add_argument("--elf")
     firmware_add.add_argument("--map")
-    ota_status = commands.add_parser("ota-status")
-    ota_status.add_argument("operation_id")
-    ota_watch = commands.add_parser("ota-watch")
-    ota_watch.add_argument("operation_id")
-    ota_watch.add_argument("--interval", type=float, default=0.5)
-    maintenance_acquire = commands.add_parser("maintenance-acquire")
-    maintenance_acquire.add_argument("device")
-    maintenance_acquire.add_argument("--expected-version", default="")
-    maintenance_acquire.add_argument("--wait-timeout", type=float, default=30)
-    maintenance_acquire.add_argument("--ttl-seconds", type=float, default=300)
-    maintenance_endpoint_acquire = commands.add_parser(
-        "maintenance-acquire-endpoint"
-    )
-    maintenance_endpoint_acquire.add_argument("endpoint")
-    maintenance_endpoint_acquire.add_argument("--expected-version", default="")
-    maintenance_endpoint_acquire.add_argument("--wait-timeout", type=float, default=30)
-    maintenance_endpoint_acquire.add_argument("--ttl-seconds", type=float, default=300)
-    maintenance_status = commands.add_parser("maintenance-status")
-    maintenance_status.add_argument("lease_id")
-    maintenance_renew = commands.add_parser("maintenance-renew")
-    maintenance_renew.add_argument("lease_id")
-    maintenance_renew.add_argument("--ttl-seconds", type=float, default=300)
-    maintenance_complete = commands.add_parser("maintenance-complete")
-    maintenance_complete.add_argument("lease_id")
-    maintenance_complete.add_argument("--timeout", type=float, default=30)
-    maintenance_abort = commands.add_parser("maintenance-abort")
-    maintenance_abort.add_argument("lease_id")
+    operation_status = commands.add_parser("operation-status")
+    operation_status.add_argument("operation_id")
+    operation_watch = commands.add_parser("operation-watch")
+    operation_watch.add_argument("operation_id")
+    operation_watch.add_argument("--interval", type=float, default=0.5)
+    host_operation = commands.add_parser("host-operation")
+    host_operation.add_argument("request_file")
+
     screenshot = commands.add_parser("screenshot")
     screenshot.add_argument("device")
     screenshot.add_argument("output")

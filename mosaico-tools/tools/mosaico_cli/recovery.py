@@ -5,10 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import subprocess
 import time
+from pathlib import Path
 from typing import Any, Callable
 
 from .errors import DeviceError, EnvironmentError, OperationError, SelectionError
@@ -17,7 +17,6 @@ from .host import HostEnvironmentError, prepare_idf_environment, state_root
 from .registry import DeviceModel
 from .runtime import RunContext
 from .workspace import WorkspaceConfig
-
 
 REQUIRED_IMAGES = ("bootloader", "partition_table", "ota_data", "recovery")
 RECOVERY_DEFAULT_FILES = ("sdkconfig.defaults", "sdkconfig.recovery.defaults")
@@ -333,48 +332,32 @@ def _registered_recovery_ports(model: DeviceModel) -> list[str]:
     return sorted(set(matches))
 
 
-def read_rom_hardware_mac(
-    context: RunContext, model: DeviceModel, port: str, idf_path: Path
-) -> str:
-    """Read the immutable factory Base MAC from one ROM download endpoint."""
+def rom_identity_command(model: DeviceModel, port: str, idf_path: Path) -> dict[str, Any]:
     try:
         prepared = prepare_idf_environment(idf_path)
     except HostEnvironmentError as error:
-        raise EnvironmentError(
-            "The ESP-IDF environment could not be prepared for ROM identity probing."
-        ) from error
+        raise EnvironmentError("The ESP-IDF environment could not be prepared for ROM identity probing.") from error
+    return {"argv": [str(prepared.python), "-m", "esptool", "--chip", model.target,
+                     "--port", port, "--before", "no-reset", "--after", "no-reset",
+                     "--no-stub", "read-mac"], "env": prepared.values}
+
+
+def rom_hardware_mac(output: str) -> str:
+    match = _ROM_MAC.search(output)
+    if match is None:
+        raise DeviceError("ROM did not report a factory Base MAC.")
+    return match.group(1).lower()
+
+
+def read_rom_hardware_mac(context: RunContext, model: DeviceModel, port: str, idf_path: Path) -> str:
+    command = rom_identity_command(model, port, idf_path)
     try:
-        result = context.run(
-            [
-                prepared.python,
-                "-m",
-                "esptool",
-                "--chip",
-                model.target,
-                "--port",
-                port,
-                # Identity probing must not consume the manually entered ROM
-                # state.  The default esptool reset policy boots the image in
-                # flash after read-mac, which makes a subsequent recover
-                # unable to find the selected endpoint.
-                "--before",
-                "no-reset",
-                "--after",
-                "no-reset",
-                "--no-stub",
-                "read-mac",
-            ],
-            timeout=30,
-            env=prepared.values,
-        )
+        result = context.run(command["argv"], timeout=30, env=command["env"])
     except subprocess.TimeoutExpired as error:
         raise DeviceError(f"ROM identity probe timed out on {port}.") from error
-    match = _ROM_MAC.search(result.stdout or "")
-    if result.returncode or match is None:
-        raise DeviceError(
-            f"Could not read the factory Base MAC from ROM endpoint {port}."
-        )
-    return match.group(1).lower()
+    if result.returncode:
+        raise DeviceError(f"Could not read the factory Base MAC from ROM endpoint {port}.")
+    return rom_hardware_mac(result.stdout or "")
 
 
 def provisioning_candidate(

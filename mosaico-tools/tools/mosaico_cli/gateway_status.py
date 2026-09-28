@@ -55,7 +55,7 @@ def status(workspace: Any, project: str | None, *, all_projects: bool = False) -
                           state="draining" if value.get("closing") else (lifecycle or {}).get("state", "legacy"))
             if not all_projects:
                 # Retain the existing single-project JSON fields.
-                result.update({key: value[key] for key in ("sessions", "endpoints", "transfers", "capability", "busy", "pairing_configured") if key in value})
+                result.update({key: value[key] for key in ("sessions", "endpoints", "takeovers", "capability", "busy", "pairing_configured") if key in value})
         except DeviceError as error:
             result["error"] = str(error)
         return result

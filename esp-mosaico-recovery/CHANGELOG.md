@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- Raise Recovery to `0.1.2` and regenerate the complete prebuilt bundle with
+  omitted-data layout support. Keep the Recovery ABI, partition table and initial
+  OTA data unchanged. Build and host validation pass; device acceptance was
+  confirmed by the operator on 2026-09-22.
+- Allow remote layout updates to omit mutable data images, including filesystem
+  partitions. Only explicitly supplied components are erased/written; omitted
+  data is not initialized and old bytes may be invalid under the new layout.
+  Mutable application images remain mandatory. Requires Recovery `0.1.2` and
+  the matching Bridge change; devices on older Recovery must be updated.
+- Separate Bridge protocol-2 PRECHECK/COMMITTING authorization from coalesced,
+  retryable progress telemetry, with an execution lease and legacy-server
+  compatibility. Reuse private HTTPS connections for control and component
+  downloads; retain explicit cancellation and the critical commit fence.
+- Persist the local update result before a final HTTPS report with a two-second
+  reboot wait budget. Keep the result available through later inventory even
+  when the cloud acknowledgement is lost. Erase only image-sized, sector-aligned
+  application ranges; retain full data-partition erasure.
+
+- Refresh the complete reviewed Recovery bundle from `151a631`, including
+  ESP-61 QR/OTA status UI, PSRAM and HTTPS throughput improvements, and the
+  device-accepted INFO splash bootloader. Keep the base partition table and
+  initial OTA data byte-identical; record the intermittent cloud progress-gate
+  failure and remaining hardware-validation limits in the historical bundle
+  README retained in Git history.
+- Raise the retained Recovery compatibility version to `0.1.1`; keep the
+  Recovery ABI and partition layout unchanged.
 - Replace local HTTP triggers and URL downloads with the Recovery-owned HTTPS
   Bridge client, supporting partitions, layout and factory updates.
 - Add USB `bridge-code` with bounded asynchronous pairing; remove

@@ -99,6 +99,8 @@ class SystemUpdateBundle:
             "target_layout_sha256": self.target_layout_sha256,
             "components": [item.as_dict() for item in self.components],
             "signature_verified": self.signature_verified,
+            "release": self.manifest.get("release"),
+            "minimum_recovery_version": self.manifest.get("minimum_recovery_version"),
         }
 
 

@@ -7,13 +7,11 @@ from pathlib import Path
 
 from .errors import BuildError
 
-COMPATIBILITY = {
-    "chip_target": "esp32s31",
-    "product_contract": "esp-mosaico/v1",
-    "board_id": "esp-mosaico",
-    "layout_id": "mosaico-retained-recovery-2m-v1",
-    "recovery_abi": 1,
-}
+# The retained Recovery product owns identity and fixed layout values.
+CONTRACT_PATH = Path(__file__).resolve().parents[3] / "esp-mosaico-recovery/product_contract.json"
+PRODUCT_CONTRACT = json.loads(CONTRACT_PATH.read_text(encoding="utf-8"))
+COMPATIBILITY = PRODUCT_CONTRACT["compatibility"]
+
 
 
 def validate_application_config(build_dir: Path) -> None:

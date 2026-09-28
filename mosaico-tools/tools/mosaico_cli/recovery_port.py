@@ -28,15 +28,3 @@ def serial_jtag_candidate(requested: str) -> dict[str, Any]:
     return {"path": str(port.device), "vid": port.vid, "pid": port.pid,
             "serial_number": str(getattr(port, "serial_number", None) or ""),
             "location": str(getattr(port, "location", None) or "")}
-
-
-def lease_port(lease: dict[str, Any]) -> str:
-    endpoint = lease.get("endpoint")
-    if not isinstance(endpoint, dict):
-        raise DeviceError("The maintenance lease did not include a physical endpoint.")
-    path = str(endpoint.get("path") or "")
-    raw = str(endpoint.get("endpoint") or "")
-    path = path or (raw[4:] if raw.startswith("usb:") else "")
-    if not path:
-        raise DeviceError("The maintenance lease did not include a writable local port.")
-    return path

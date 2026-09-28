@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -30,8 +31,7 @@ from .runtime import RunContext
 from .workspace import WorkspaceConfig, user_path
 
 REQUIRED_GATEWAY_API_MAJOR = 1
-MAINTENANCE_CAPABILITY = "device-maintenance-lease/v1"
-ENDPOINT_MAINTENANCE_CAPABILITY = "physical-endpoint-maintenance-lease/v1"
+HOST_OPERATION_CAPABILITY = "local-host-operations/v1"
 SYSTEM_INVENTORY_CAPABILITY = "system-inventory/v1"
 MOSAICO_COMPATIBILITY_JSON = json.dumps(COMPATIBILITY, separators=(",", ":"))
 
@@ -374,160 +374,42 @@ def enter_recovery_and_wait(
     return status
 
 
-def acquire_maintenance_lease(
-    context: RunContext,
-    session: GatewaySession,
-    *,
-    device_id: str,
-    expected_version: str,
-    timeout: float,
-) -> dict[str, Any]:
+def run_host_operation(context: RunContext, session: GatewaySession, spec: dict[str, Any],
+                       *, timeout: float) -> dict[str, Any]:
     if not _is_local_session(session):
-        raise DeviceError("Remote Recovery is not supported; use the local Gateway.")
+        raise DeviceError("ROM operations require the local Gateway.")
     health = gateway_json(context, session, "health")
-    capabilities = health.get("capabilities", []) if isinstance(health, dict) else []
-    if MAINTENANCE_CAPABILITY not in capabilities:
-        raise EnvironmentError(
-            "The local ESP-Iris Gateway does not support device maintenance leases."
-        )
-    value = gateway_json(
-        context,
-        session,
-        "maintenance-acquire",
-        device_id,
-        "--expected-version",
-        expected_version,
-        "--wait-timeout",
-        str(min(timeout, 60)),
-        "--ttl-seconds",
-        str(timeout + 60),
-        timeout=min(timeout, 75),
-        sensitive_output=True,
-    )
-    lease = value.get("lease") if isinstance(value, dict) else None
-    if not isinstance(lease, dict) or not lease.get("lease_id") or not lease.get("token"):
-        raise DeviceError("ESP-Iris returned an invalid maintenance lease.")
-    endpoint = lease.get("endpoint")
-    if not isinstance(endpoint, dict) or not (
-        endpoint.get("path") or str(endpoint.get("endpoint") or "").startswith("usb:")
-    ):
-        try:
-            finish_maintenance_lease(
-                context, session, lease, abort=True, timeout=min(timeout, 30)
-            )
-        except DeviceError:
-            pass
-        raise DeviceError("The maintenance lease did not include a writable local port.")
-    return lease
-
-
-def acquire_endpoint_maintenance_lease(
-    context: RunContext,
-    session: GatewaySession,
-    *,
-    endpoint: str,
-    expected_version: str,
-    timeout: float,
-) -> dict[str, Any]:
-    if not _is_local_session(session):
-        raise DeviceError("Remote Recovery is not supported; use the local Gateway.")
-    health = gateway_json(context, session, "health")
-    capabilities = health.get("capabilities", []) if isinstance(health, dict) else []
-    if ENDPOINT_MAINTENANCE_CAPABILITY not in capabilities:
-        raise EnvironmentError(
-            "The local ESP-Iris Gateway does not support physical endpoint maintenance leases."
-        )
-    value = gateway_json(
-        context,
-        session,
-        "maintenance-acquire-endpoint",
-        endpoint,
-        "--expected-version",
-        expected_version,
-        "--wait-timeout",
-        str(min(timeout, 60)),
-        "--ttl-seconds",
-        str(timeout + 60),
-        timeout=min(timeout, 75),
-        sensitive_output=True,
-    )
-    lease = value.get("lease") if isinstance(value, dict) else None
-    if not isinstance(lease, dict) or not lease.get("lease_id") or not lease.get("token"):
-        raise DeviceError("ESP-Iris returned an invalid maintenance lease.")
-    leased_endpoint = lease.get("endpoint")
-    if not isinstance(leased_endpoint, dict) or not (
-        leased_endpoint.get("path")
-        or str(leased_endpoint.get("endpoint") or "").startswith("usb:")
-    ):
-        try:
-            finish_maintenance_lease(
-                context, session, lease, abort=True, timeout=min(timeout, 30)
-            )
-        except DeviceError:
-            pass
-        raise DeviceError("The maintenance lease did not include a writable local port.")
-    return lease
-
-
-def finish_maintenance_lease(
-    context: RunContext,
-    session: GatewaySession,
-    lease: dict[str, Any],
-    *,
-    abort: bool,
-    timeout: float,
-) -> dict[str, Any]:
-    token = str(lease.get("token") or "")
-    lease_id = str(lease.get("lease_id") or "")
-    if not token or not lease_id:
-        raise DeviceError("The maintenance lease credentials are unavailable.")
-    environment = os.environ.copy()
-    environment["ESP_IRIS_MAINTENANCE_TOKEN"] = token
-    arguments = [
-        "maintenance-abort" if abort else "maintenance-complete",
-        lease_id,
-    ]
-    if not abort:
-        arguments.extend(["--timeout", str(timeout)])
-    value = gateway_json(
-        context,
-        session,
-        *arguments,
-        timeout=timeout + 15,
-        environment=environment,
-    )
-    result = value.get("lease") if isinstance(value, dict) else None
-    if not isinstance(result, dict):
-        raise DeviceError("ESP-Iris returned an invalid maintenance completion result.")
-    return result
-
-
-def renew_maintenance_lease(
-    context: RunContext,
-    session: GatewaySession,
-    lease: dict[str, Any],
-    *,
-    ttl_seconds: float,
-) -> dict[str, Any]:
-    token = str(lease.get("token") or "")
-    lease_id = str(lease.get("lease_id") or "")
-    if not token or not lease_id:
-        raise DeviceError("The maintenance lease credentials are unavailable.")
-    environment = os.environ.copy()
-    environment["ESP_IRIS_MAINTENANCE_TOKEN"] = token
-    value = gateway_json(
-        context,
-        session,
-        "maintenance-renew",
-        lease_id,
-        "--ttl-seconds",
-        str(ttl_seconds),
-        environment=environment,
-    )
-    result = value.get("lease") if isinstance(value, dict) else None
-    if not isinstance(result, dict):
-        raise DeviceError("ESP-Iris returned an invalid maintenance renewal result.")
-    return result
+    if HOST_OPERATION_CAPABILITY not in health.get("capabilities", []):
+        raise EnvironmentError("Gateway lacks local host operations; restart it with the current tools.")
+    descriptor, filename = tempfile.mkstemp(prefix="iris-command-", suffix=".json", dir=context.directory)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(spec, stream)
+        accepted = gateway_json(context, session, "host-operation", filename)
+    finally:
+        Path(filename).unlink(missing_ok=True)
+    operation = accepted["operation"]
+    operation_id = operation["operation_id"]
+    context.status(f"operation: {operation_id}")
+    (context.directory / "host-operation.json").write_text(
+        json.dumps({"operation_id": operation_id}), encoding="utf-8")
+    deadline = time.monotonic() + timeout
+    terminal = {"succeeded", "failed", "cancelled", "interrupted", "outcome_unknown"}
+    while operation["status"] not in terminal:
+        if time.monotonic() >= deadline:
+            raise DeviceError("ROM operation is still running; its writer and port lock remain active.",
+                              details={"operation_id": operation_id})
+        time.sleep(0.2)
+        operation = gateway_json(context, session, "operation-status", operation_id)
+        operation = operation.get("operation", operation)
+    if operation["status"] != "succeeded":
+        raise OperationError(operation.get("error") or "ROM operation did not succeed.",
+                             details={"operation_id": operation_id, "status": operation["status"]})
+    result = operation.get("result") or {}
+    log_path = result.get("log_path")
+    if log_path and Path(log_path).is_file():
+        context.note(Path(log_path).read_text(encoding="utf-8", errors="replace"))
+    return {**result, "operation_id": operation_id}
 
 
 def gateway_devices(
@@ -655,7 +537,7 @@ def _wait_gateway_operation(
             last_bucket = bucket
         time.sleep(0.25)
         try:
-            current = gateway_json(context, session, "ota-status", operation_id)
+            current = gateway_json(context, session, "operation-status", operation_id)
         except DeviceError:
             from .session_runtime import CURRENT_SCOPE
 

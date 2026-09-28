@@ -8,6 +8,8 @@ import sys
 import time
 
 import pytest
+from PIL import Image
+import zxingcpp
 
 ROOT = Path(__file__).resolve().parents[1]
 RECOVERY = ROOT / "firmware/recovery"
@@ -93,8 +95,13 @@ class Simulator:
 
     def open_bridge(self):
         # Same public controller entry used by the device's queued USB RPC.
+        self.control("open-bridge")
+
+    def control(self, command):
         request = self.directory / "control"
-        request.write_text("open-bridge")
+        temporary = self.directory / "control.tmp"
+        temporary.write_text(command)
+        temporary.replace(request)
         deadline = time.monotonic() + 5
         while request.exists():
             assert time.monotonic() < deadline
@@ -314,4 +321,71 @@ def test_empty_lists_remain_navigable(sim):
     sim.tap(150, 170)
     sim.wait(page=5)
     sim.tap(38, 36)
+    sim.wait(page=0)
+
+
+@pytest.mark.parametrize("sim", ["prefetched", "long-code", "waiting-code"], indirect=True)
+def test_download_qr_decodes_from_native_frame_and_code_survives_navigation(sim):
+    sim.tap(240, 390)
+    sim.wait(page=4)
+    sim.capture("ideas-qr")
+    frame = Image.open(sim.directory / "ideas-qr.png")
+    codes = zxingcpp.read_barcodes(frame)
+    assert [code.text for code in codes] == ["https://mosaico-ideas.espressif.com/"]
+    snapshot = sim.wait(page=4)
+    if snapshot["code_length"] == 15:
+        # Worst-case wide characters must have visible ink and side margins.
+        assert frame.crop((40, 328, 440, 362)).getbbox()
+        pixels = frame.convert("RGB")
+        for x in (36, 443):
+            assert all(max(pixels.getpixel((x, y))) < 100 for y in range(321, 372))
+    sim.tap(38, 36)
+    sim.wait(page=0, bridge_running=True, bridge_active=False)
+    sim.tap(240, 390)
+    sim.wait(page=4, bridge_running=True, bridge_active=True)
+    sim.control("expire-code")
+    sim.wait(renewed_code=True)
+    sim.tap(240, 444)
+    sim.wait(page=0, bridge_running=False, code_ready=False)
+
+
+def test_ota_telemetry_component_transition_stall_retry_and_terminal_states(sim):
+    def sample(ms, received, total=4*1024*1024, component=1, completed=0,
+               receiving=1, job=1, component_received=None, terminal=0):
+        if component_received is None:
+            component_received = received
+        sim.control("transfer %d %d %d %d 2 %d %d %d %d 2097152 %d" %
+                    (ms, received, total, component, completed, receiving, job, component_received, terminal))
+        return sim.wait(sample_ms=ms)
+
+    sample(0, 0)
+    sim.wait(page=7, progress=0, rate_valid=False)
+    sample(1000, 1024*1024)
+    sim.wait(progress=250, rate_valid=True, rate_bps=1024*1024)
+    sim.capture("ota-downloading")
+    sample(2000, 1024*1024)
+    sim.wait(progress=250, rate_bps=0)
+    sim.capture("ota-stalled")
+    sample(2250, 2*1024*1024, receiving=0)
+    sim.wait(progress=500, rate_valid=False)
+    sim.capture("ota-component-verified")
+    sample(2500, 2*1024*1024, component=2, completed=1, component_received=0)
+    sim.wait(progress=500, rate_valid=False, component_id=2)
+    sample(3500, 3*1024*1024, component=2, completed=1, component_received=1024*1024)
+    sim.wait(progress=750, rate_valid=True, rate_bps=1024*1024)
+    sim.capture("ota-second-component")
+    sample(3750, 2*1024*1024, component=2, completed=1, component_received=0)
+    sim.wait(progress=500, rate_valid=False)  # retry rolls back only the active payload
+    sample(4000, 0, total=0, job=2)
+    sim.wait(progress=0, rate_valid=False)
+    sim.capture("ota-unknown-size")
+    sample(5000, 1024, total=0, job=2)
+    sim.wait(rate_valid=True, rate_bps=1024)
+    sample(6000, 4*1024*1024, component=0, completed=2, receiving=0, job=3)
+    sim.wait(page=7, progress=1000, rate_valid=False)
+    sim.capture("ota-committing")
+    sample(7000, 4*1024*1024, component=0, completed=2, receiving=0, job=3, terminal=2)
+    sim.wait(page=8, progress=1000, rate_valid=False)
+    sim.capture("ota-failed-after-transfer")
+    sim.tap(240, 409)
     sim.wait(page=0)

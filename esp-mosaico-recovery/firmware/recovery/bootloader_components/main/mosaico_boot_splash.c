@@ -10,17 +10,19 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "sdkconfig.h"
+#if CONFIG_EFUSE_VIRTUAL
 #include "esp_efuse.h"
 #include "esp_efuse_table.h"
+#endif
 #include "esp_log.h"
 #include "esp_rom_gpio.h"
 #include "esp_rom_sys.h"
 #include "hal/gpio_ll.h"
-#include "hal/spi_hal.h"
 #include "hal/spi_ll.h"
-#include "sdkconfig.h"
+#include "soc/efuse_reg.h"
 #include "soc/gpio_sig_map.h"
-#include "soc/spi_periph.h"
+#include "soc/soc.h"
 
 #define LCD_WIDTH 480U
 #define LCD_HEIGHT 480U
@@ -64,8 +66,6 @@
   ((uint16_t)(((uint16_t)(major) << 8) | ((uint16_t)(minor) & 0xFFU)))
 
 static const char *TAG = "boot_splash";
-static spi_hal_context_t s_spi;
-static spi_hal_dev_config_t s_spi_device;
 static uint16_t s_hw_version;
 
 /* Compact 5x7 lowercase "mosaico". Each set bit becomes one rounded 6x6 dot
@@ -81,11 +81,19 @@ static const uint8_t s_logo[LOGO_CHAR_COUNT][LOGO_GLYPH_ROWS] = {
 };
 
 static bool hardware_version_supported(void) {
+#if CONFIG_EFUSE_VIRTUAL
   uint16_t version = 0;
   if (esp_efuse_read_field_blob(ESP_EFUSE_USER_DATA, &version,
                                 sizeof(version) * 8U) != ESP_OK) {
     return false;
   }
+#else
+  /* ESP32-S31 USER_DATA starts at block 3 bit 0. The ROM has already loaded
+   * its read registers before entering this bootloader. Only the low 16 bits
+   * encode the board version; avoid linking the general eFuse blob walker
+   * just to read this fixed field. Keep the API path for virtual eFuse tests. */
+  const uint16_t version = (uint16_t)REG_READ(EFUSE_RD_USR_DATA0_REG);
+#endif
   if (version != MOSAICO_HW_VERSION(1, 0) &&
       version != MOSAICO_HW_VERSION(1, 1) &&
       version != MOSAICO_HW_VERSION(1, 2)) {
@@ -122,7 +130,7 @@ static void route_spi_output(int gpio, int signal) {
 static bool spi_wait(void) {
   uint32_t started_ms = 0;
   unsigned polls = 0;
-  while (!spi_hal_usr_is_done(&s_spi)) {
+  while (!spi_ll_usr_is_done(&GPSPI2)) {
     /* A normal 64-byte QSPI transfer completes in a few microseconds.  Avoid
      * reading the early boot clock for every one of the ~7200 chunks; sample
      * it only if a transfer is unexpectedly slow, while retaining a bounded
@@ -146,20 +154,17 @@ static bool spi_tx(const void *data, size_t size, uint8_t lines,
     uint8_t fifo[LCD_FIFO_BYTES] = {0};
     const size_t chunk = size > sizeof(fifo) ? sizeof(fifo) : size;
     memcpy(fifo, cursor, chunk);
-    const spi_hal_trans_config_t transaction = {
-        .tx_bitlen = (int)(chunk * 8U),
-        .send_buffer = fifo,
-        .line_mode =
-            {
-                .cmd_lines = 1,
-                .addr_lines = 1,
-                .data_lines = lines,
-            },
-        .cs_keep_active = keep_cs_active || chunk < size,
-    };
-    spi_hal_setup_trans(&s_spi, &s_spi_device, &transaction);
-    spi_hal_push_tx_buffer(&s_spi, &transaction);
-    spi_hal_user_start(&s_spi);
+    /* This boot-only bus has one TX-only device, no DMA/RX, and no hardware
+     * command/address/dummy phases. Configure only what changes per chunk;
+     * the fixed settings are established once in spi_init(). */
+    spi_ll_clear_int_stat(&GPSPI2);
+    spi_ll_master_set_line_mode(&GPSPI2, (spi_line_mode_t){
+        .cmd_lines = 1, .addr_lines = 1, .data_lines = lines});
+    spi_ll_set_mosi_bitlen(&GPSPI2, chunk * 8U);
+    spi_ll_master_keep_cs(&GPSPI2, keep_cs_active || chunk < size);
+    spi_ll_write_buffer(&GPSPI2, fifo, chunk * 8U);
+    spi_ll_apply_config(&GPSPI2);
+    spi_ll_user_start(&GPSPI2);
     if (!spi_wait()) {
       return false;
     }
@@ -219,40 +224,39 @@ static void spi_init(void) {
   route_spi_output(LCD_DATA3_GPIO, SPI2_HOLD_PAD_OUT_IDX);
   route_spi_output(LCD_CS_GPIO, SPI2_CS_PAD_OUT_IDX);
 
-  spi_hal_init(&s_spi, SPI2_HOST);
-  s_spi_device = (spi_hal_dev_config_t){
-      .mode = 0,
-      .cs_pin_id = 0,
-      .half_duplex = 1,
-      .timing_conf =
-          {
-              .clock_source = SPI_CLK_SRC_XTAL,
-              .source_pre_div = 1,
-              .source_real_freq = LCD_SPI_SOURCE_HZ,
-              .expect_freq = LCD_SPI_CLOCK_HZ,
-              .real_freq = LCD_SPI_CLOCK_HZ,
-          },
-  };
+  spi_ll_master_init(&GPSPI2);
+  spi_ll_clock_val_t clock_reg;
   spi_ll_master_cal_clock(LCD_SPI_SOURCE_HZ, LCD_SPI_CLOCK_HZ, 128,
-                          &s_spi_device.timing_conf.clock_reg);
-  spi_hal_setup_device(&s_spi, &s_spi_device);
-  spi_hal_enable_data_line(s_spi.hw, true, false);
+                          &clock_reg);
+  spi_ll_master_set_clock_by_reg(&GPSPI2, &clock_reg);
+  spi_ll_master_set_pos_cs(&GPSPI2, 0, false);
+  spi_ll_master_set_mode(&GPSPI2, 0);
+  spi_ll_set_tx_lsbfirst(&GPSPI2, false);
+  spi_ll_set_rx_lsbfirst(&GPSPI2, false);
+  spi_ll_set_half_duplex(&GPSPI2, true);
+  spi_ll_set_sio_mode(&GPSPI2, false);
+  spi_ll_master_set_cs_setup(&GPSPI2, 0);
+  spi_ll_master_set_cs_hold(&GPSPI2, 0);
+  spi_ll_master_select_cs(&GPSPI2, 0);
+  spi_ll_enable_ddr_mode(&GPSPI2, false);
+  spi_ll_set_command_bitlen(&GPSPI2, 0);
+  spi_ll_set_addr_bitlen(&GPSPI2, 0);
+  spi_ll_set_dummy(&GPSPI2, 0);
+  spi_ll_enable_mosi(&GPSPI2, true);
+  spi_ll_enable_miso(&GPSPI2, false);
 }
 
 static bool panel_init(void) {
-  static const struct {
-    uint8_t command;
-    uint8_t data[4];
-    uint8_t size;
-  } init[] = {
-      {0xFE, {0x20}, 1}, {0x19, {0x10}, 1},
-      {0x1C, {0xA0}, 1}, {0xFE, {0x00}, 1},
-      {0xC4, {0x80}, 1}, {0x3A, {0x55}, 1},
+  /* Every command in this table takes exactly one byte. */
+  static const uint8_t init[][2] = {
+      {0xFE, 0x20}, {0x19, 0x10},
+      {0x1C, 0xA0}, {0xFE, 0x00},
+      {0xC4, 0x80}, {0x3A, 0x55},
 #if CONFIG_BSP_CO5300_ENABLE_TE
-      {0x35, {0x00}, 1},
+      {0x35, 0x00},
 #endif
-      {0x53, {0x20}, 1}, {0x51, {LCD_BOOT_BRIGHTNESS}, 1},
-      {0x63, {0xFF}, 1}, {0x36, {0x00}, 1},
+      {0x53, 0x20}, {0x51, LCD_BOOT_BRIGHTNESS},
+      {0x63, 0xFF}, {0x36, 0x00},
   };
 
   const int lcd_reset_gpio = s_hw_version == MOSAICO_HW_VERSION(1, 0)
@@ -272,7 +276,7 @@ static bool panel_init(void) {
   }
   esp_rom_delay_us(60000);
   for (size_t i = 0; i < sizeof(init) / sizeof(init[0]); ++i) {
-    if (!lcd_command(init[i].command, init[i].data, init[i].size)) {
+    if (!lcd_command(init[i][0], &init[i][1], 1)) {
       return false;
     }
   }
@@ -345,6 +349,6 @@ bool mosaico_boot_splash_show(void) {
     return false;
   }
   mosaico_boot_handoff_publish();
-  ESP_LOGW(TAG, "LCD boot splash visible");
+  ESP_LOGI(TAG, "LCD boot splash visible");
   return true;
 }

@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
 import json
 import os
-from pathlib import Path
-from queue import Empty, Queue
 import re
 import subprocess
 import sys
-from threading import Thread
 import time
-from typing import Callable, Sequence
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from queue import Empty, Queue
+from threading import Thread
+from typing import Any, Callable, Sequence
 
 from .build_progress import decode_progress
 from .errors import BuildError, DeviceError, EnvironmentError
@@ -389,7 +389,7 @@ def _idf_failure_diagnostic(output: str) -> str | None:
     return f"Build diagnostic ({category}):\n" + "\n".join(excerpt)
 
 
-def run_idf_target(
+def idf_target_command(
     context: RunContext,
     *,
     idf_path: Path,
@@ -399,7 +399,7 @@ def run_idf_target(
     definitions: dict[str, str] | None = None,
     port: str | None = None,
     timeout: float,
-) -> None:
+) -> dict[str, Any]:
     try:
         prepared = prepare_idf_environment(idf_path)
     except HostEnvironmentError as error:
@@ -423,12 +423,30 @@ def run_idf_target(
         # Custom ESP-IDF flash targets consume ESPPORT in run_serial_tool.cmake;
         # idf.py's -p option is only propagated to its built-in flash actions.
         process_environment["ESPPORT"] = port
+    return {"argv": [str(part) for part in command], "cwd": str(context.workspace.root),
+            "env": process_environment}
+
+
+def run_idf_target(
+    context: RunContext,
+    *,
+    idf_path: Path,
+    project: Path,
+    build_dir: Path,
+    target: str,
+    definitions: dict[str, str] | None = None,
+    port: str | None = None,
+    timeout: float,
+) -> None:
+    command = idf_target_command(context, idf_path=idf_path, project=project,
+                                 build_dir=build_dir, target=target, definitions=definitions,
+                                 port=port, timeout=timeout)
     try:
         result = context.run(
-            command,
+            command["argv"],
             timeout=timeout,
-            cwd=context.workspace.root,
-            env=process_environment,
+            cwd=Path(command["cwd"]),
+            env=command["env"],
             output_status=_idf_progress_parser(),
         )
     except subprocess.TimeoutExpired as error:

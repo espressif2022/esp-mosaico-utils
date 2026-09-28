@@ -15,6 +15,7 @@ static unsigned connect_attempts, bridge_open_calls;
 static unsigned bridge_prefetch_calls;
 static bool bridge_active;
 static bool connecting, installing;
+static bool renewed_code;
 static void *trace_timer;
 static bool scenario(const char *name)
 {
@@ -27,10 +28,32 @@ static void trace_state(esp_gsp_handle_t ui, void *ctx)
     const char *control = getenv("VIBE_SIM_CONTROL_FILE");
     FILE *request = control ? fopen(control, "r") : NULL;
     if (request) {
-        char command[32] = {0};
+        char command[256] = {0};
         (void)fgets(command, sizeof(command), request);
         fclose(request); remove(control);
         if (!strcmp(command, "open-bridge")) (void)vibe_ui_open_bridge(&state);
+        if (!strcmp(command, "expire-code")) renewed_code = true;
+        unsigned long long ms, received, total;
+        unsigned component, count, completed, receiving, job, component_received, component_size, terminal;
+        if (sscanf(command, "transfer %llu %llu %llu %u %u %u %u %u %u %u %u",
+                   &ms, &received, &total, &component, &count, &completed, &receiving, &job,
+                   &component_received, &component_size, &terminal) == 11) {
+            model.transfer = (vibe_transfer_t){.now_ms=ms, .received=received, .total=total,
+                .component_id=component, .component_count=count, .completed_components=completed,
+                .receiving=receiving != 0, .component_received=component_received,
+                .component_size=component_size, .source=2};
+            model.transfer.job[0] = (uint8_t)job;
+            model.progress = vibe_transfer_permille(received, total);
+            model.updating = terminal == 0;
+            model.update_terminal = terminal != 0;
+            model.update_failed = terminal == 2;
+            ++model.update_revision;
+            snprintf(model.update_title, sizeof(model.update_title), "%s", terminal == 2 ? "Update failed" : terminal ? "Update complete" : "Updating system");
+            snprintf(model.update_detail, sizeof(model.update_detail), "%s", terminal == 2 ? "Connection interrupted - retry" : terminal ? "System images verified and committed" : receiving ? "Downloading system component" : completed == count ? "Committing protected system images" : "Component verified");
+            snprintf(model.update_owner, sizeof(model.update_owner), "Bridge");
+            snprintf(model.update_verified, sizeof(model.update_verified), "Unsigned");
+            vibe_ui_poll(&state);
+        }
     }
     const char *path = getenv("VIBE_SIM_STATE_FILE");
     if (!path || !path[0]) return;
@@ -39,10 +62,13 @@ static void trace_state(esp_gsp_handle_t ui, void *ctx)
     FILE *file = fopen(temporary, "w");
     if (!file) return;
     /* Observable test state never contains credentials or pairing tokens. */
-    fprintf(file, "{\"page\":%d,\"password_length\":%u,\"password_visible\":%s,\"pending\":%s,\"bridge_running\":%s,\"network\":%d,\"progress\":%u,\"bridge_open_calls\":%u,\"bridge_prefetch_calls\":%u,\"bridge_active\":%s,\"code_ready\":%s}\n",
+    fprintf(file, "{\"page\":%d,\"password_length\":%u,\"password_visible\":%s,\"pending\":%s,\"bridge_running\":%s,\"network\":%d,\"progress\":%u,\"bridge_open_calls\":%u,\"bridge_prefetch_calls\":%u,\"bridge_active\":%s,\"code_ready\":%s,\"code_length\":%u,\"renewed_code\":%s,\"rate_valid\":%s,\"rate_bps\":%llu,\"component_id\":%u,\"sample_ms\":%llu}\n",
         state.page, (unsigned)strlen(state.password), state.password_visible ? "true" : "false",
         state.download_pending ? "true" : "false", model.bridge_running ? "true" : "false", model.network, model.progress, bridge_open_calls,
-        bridge_prefetch_calls, bridge_active ? "true" : "false", model.bridge_code[0] ? "true" : "false");
+        bridge_prefetch_calls, bridge_active ? "true" : "false", model.bridge_code[0] ? "true" : "false",
+        (unsigned)strlen(model.bridge_code), renewed_code ? "true" : "false",
+        state.rate.valid ? "true" : "false", (unsigned long long)state.rate.bytes_per_second,
+        model.transfer.component_id, (unsigned long long)model.transfer.now_ms);
     fclose(file);
 #ifdef _WIN32
     /* The Windows C runtime's rename cannot replace an existing snapshot. */
@@ -61,6 +87,9 @@ static void snapshot(void *ctx, vibe_snapshot_t *out)
     }
     if (installing) {
         model.progress += 50;
+        model.transfer.now_ms += 250;
+        model.transfer.received = model.transfer.total * model.progress / 1000;
+        model.transfer.component_received = (uint32_t)model.transfer.received;
         if (scenario("update-fail") && model.progress >= 500) {
             installing = false; model.updating = false;
             model.update_terminal = model.update_failed = true;
@@ -73,10 +102,11 @@ static void snapshot(void *ctx, vibe_snapshot_t *out)
             snprintf(model.update_title, sizeof(model.update_title), "Update complete");
             snprintf(model.update_detail, sizeof(model.update_detail), "Simulated images verified");
         }
+        model.transfer.receiving = installing;
     }
-    if (model.bridge_running && model.network == VIBE_NET_CONNECTED) {
+    if (model.bridge_running && model.network == VIBE_NET_CONNECTED && !scenario("waiting-code")) {
         snprintf(model.bridge_state, sizeof(model.bridge_state), "PAIRING");
-        snprintf(model.bridge_code, sizeof(model.bridge_code), "VIBE123456");
+        snprintf(model.bridge_code, sizeof(model.bridge_code), "%s", scenario("long-code") ? "WWWWWWWWWWWWWWW" : renewed_code ? "NEW1234567" : "VIBE123456");
         model.bridge_seconds = 300;
     }
     *out = model;
@@ -111,7 +141,11 @@ static int command(void *ctx, vibe_command_t cmd, const char *a, const char *b)
     case VIBE_SCAN_NAND: ++model.nand_generation; break;
     case VIBE_INSTALL_NAND:
         installing = true; model.updating = true; model.update_terminal = false; model.progress = 0;
+        model.update_failed = false;
         ++model.update_revision;
+        model.transfer = (vibe_transfer_t){.source=3, .total=1024*1024,
+            .component_size=1024*1024, .component_count=1, .component_id=1, .receiving=true};
+        model.transfer.job[0] = (uint8_t)model.update_revision;
         snprintf(model.update_title, sizeof(model.update_title), "Updating system");
         snprintf(model.update_detail, sizeof(model.update_detail), "Reading simulated NAND component");
         snprintf(model.update_owner, sizeof(model.update_owner), "NAND");
@@ -123,7 +157,7 @@ static int command(void *ctx, vibe_command_t cmd, const char *a, const char *b)
 esp_gsp_err_t gsp_bridge_app_init(esp_gsp_handle_t ui)
 {
     model.tcp_port = 7777;
-    if (scenario("prefetched")) {
+    if (scenario("prefetched") || scenario("long-code") || scenario("waiting-code")) {
         model.credentials_saved = true;
         model.network = VIBE_NET_CONNECTED;
         snprintf(model.ip, sizeof(model.ip), "192.0.2.10");

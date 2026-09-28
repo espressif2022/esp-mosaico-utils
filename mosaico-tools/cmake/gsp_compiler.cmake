@@ -1,0 +1,14 @@
+# Resolve the pinned compiler before ESP-IDF discovers ESP-GSP.
+if(NOT GSPC_EXECUTABLE AND DEFINED ENV{GSPC_EXECUTABLE} AND NOT "$ENV{GSPC_EXECUTABLE}" STREQUAL "")
+    set(GSPC_EXECUTABLE "$ENV{GSPC_EXECUTABLE}")
+endif()
+if(NOT GSPC_EXECUTABLE)
+    find_program(MOSAICO_GSPC_PYTHON NAMES python3 python REQUIRED)
+    execute_process(COMMAND "${MOSAICO_GSPC_PYTHON}" "${CMAKE_CURRENT_LIST_DIR}/../tools/gsp-sim/fetch_gspc.py"
+        OUTPUT_VARIABLE GSPC_EXECUTABLE OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE result)
+    if(NOT result EQUAL 0 OR GSPC_EXECUTABLE STREQUAL "")
+        message(FATAL_ERROR "Could not resolve the pinned GSP compiler; set GSPC_EXECUTABLE")
+    endif()
+endif()
+set(GSPC_EXECUTABLE "${GSPC_EXECUTABLE}" CACHE FILEPATH "Pinned ESP-GSP compiler")
+set(ENV{GSPC_EXECUTABLE} "${GSPC_EXECUTABLE}")

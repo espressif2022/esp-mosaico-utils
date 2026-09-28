@@ -1,0 +1,5 @@
+{
+  "schema": "mosaico-ideas/project-upload/v1",
+  "project": {"title": "Invalid platform identity", "categories": ["sensors"], "application_id": "must-not-be-committed"},
+  "content": {"readme": "../README.md"}
+}

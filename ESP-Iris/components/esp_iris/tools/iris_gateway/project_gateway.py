@@ -3,16 +3,13 @@ from __future__ import annotations
 
 import asyncio
 import collections
-import contextlib
 import re
 import time
 import uuid
 from typing import Any, NoReturn
-from urllib.parse import urlsplit
 
-from aiohttp import ClientError, ClientSession, ClientTimeout, web
+from aiohttp import web
 
-from .client_lifecycle import CAPABILITY as LIFECYCLE_CAPABILITY
 from .client_lifecycle import ClientLifecycle
 from .compat import to_thread
 from .device_selection import admit_candidates, identity_candidates
@@ -22,8 +19,12 @@ from .discovery import (
     resolve_usb_port,
     usb_endpoint,
 )
+from .host_worker import active_workers
 from .http_support import error_response, request_is_loopback
 from .ownership import CAPABILITY, OwnershipConflict, OwnershipRegistry
+from .takeover import CAPABILITY as TAKEOVER_CAPABILITY
+from .takeover import busy_error, drain_device, drain_timeout, public_record
+from .takeover import register_routes as register_takeover_routes
 
 
 class ProjectGateway:
@@ -42,15 +43,21 @@ class ProjectGateway:
         self.active: dict[str, int] = collections.defaultdict(int)
         self.blocked: set[str] = set()
         self.control_lock = asyncio.Lock()
-        self.jobs: dict[tuple[str, int], dict[str, Any]] = {}
+        self.device_control: dict[str, asyncio.Lock] = collections.defaultdict(asyncio.Lock)
+        self.jobs = service.jobs
         self.clients = ClientLifecycle()
         self.control_requests = 0
         self.streams = 0
 
     def keepalive_reasons(self) -> dict[str, int]:
+        workers = active_workers()
+        resources = {value for claim in (self.registry.claims() if workers else [])
+                     if claim["owner"] == self.registry.session_id
+                     for value in (claim["resource"], claim.get("device_id")) if value}
         return {"requests": sum(self.active.values()) + self.control_requests,
-                "operations": len(self.service.operations._pending), "jobs": len(self.jobs),
-                "maintenance": len(self.service.store.active_maintenance_leases()),
+                "operations": len(self.service.operations._pending),
+                "host_workers": sum(bool(resources.intersection(worker["resources"])) for worker in workers),
+                "jobs": len(self.jobs),
                 "mirrors": len(self.hub._mirror_states), "streams": self.streams}
 
     async def idle_shutdown(self) -> None:
@@ -61,24 +68,27 @@ class ProjectGateway:
             await asyncio.sleep(0.1)
 
     def observe(self, event: dict[str, Any]) -> None:
-        device_id = str(event.get("device_id") or "")
-        if event.get("kind") == "job":
-            key = (device_id, int(event["job_id"]))
-            if event.get("job_state") in {"succeeded", "failed", "cancelled"}:
-                self.jobs.pop(key, None)
-            else:
-                self.jobs[key] = dict(event)
-        elif event.get("kind") == "connection" and event.get("connection_state") == "rebooted":
-            self.jobs = {key: value for key, value in self.jobs.items() if key[0] != device_id}
+        self.service.observe_device_activity(event)
 
     def busy(self, device_id: str | None = None) -> bool:
-        operations = self.service.operations
         if device_id is None:
             return any(self.keepalive_reasons().values())
-        state = operations.queue_state(device_id)
-        return bool(self.active[device_id] or state["running"] or state["queued"]
-                    or state["maintenance"] or any(key[0] == device_id for key in self.hub._mirror_states)
-                    or any(key[0] == device_id for key in self.jobs))
+        return bool(self.busy_reasons(device_id))
+
+    def busy_reasons(self, device_id: str) -> list[dict[str, Any]]:
+        state = self.service.operations.queue_state(device_id)
+        reasons = [{"kind": "operation", "operation_id": value}
+                   for value in state["running"] + state["queued"]]
+        for worker in active_workers():
+            if device_id in worker["resources"] and not any(
+                reason.get("operation_id") == worker["operation_id"] for reason in reasons
+            ):
+                reasons.append({"kind": "operation", "operation_id": worker["operation_id"]})
+        if self.active[device_id]:
+            reasons.append({"kind": "request", "count": self.active[device_id]})
+        reasons.extend({"kind": "mirror", "channel": channel} for channel in self.hub.active_mirrors(device_id))
+        reasons.extend({"kind": "job", "job_id": key[1]} for key in self.jobs if key[0] == device_id)
+        return reasons
 
     def request_stop(self) -> None:
         self.closing = True
@@ -95,8 +105,6 @@ class ProjectGateway:
 
     @web.middleware
     async def guard(self, request: web.Request, handler: Any) -> web.StreamResponse:
-        if self.closing and request.path == "/v1/maintenance-endpoints/leases":
-            raise OwnershipConflict("project session is draining")
         device_id = request.match_info.get("device_id")
         if not device_id:
             # Status/health and client lease control are passive. All business
@@ -134,12 +142,12 @@ class ProjectGateway:
     def snapshot(self) -> dict[str, Any]:
         claims = self.registry.claims()
         return {"session": self.registry.session(self.registry.session_id),
-                "capability": CAPABILITY, "closing": self.closing,
+                "capability": CAPABILITY, "capabilities": [TAKEOVER_CAPABILITY], "closing": self.closing,
                 "lifecycle": self.clients.snapshot(self.keepalive_reasons()) if self.shared else None,
                 "pairing_configured": bool(self.pairing_token),
                 "busy": self.busy(), "sessions": self.registry.sessions(),
-                "claims": claims, "endpoints": self.hub.list_endpoints(),
-                "transfers": [self.registry.transfer(key) for key in sorted({
+                "claims": claims, "endpoints": self.service.list_endpoints(),
+                "takeovers": [public_record(self.registry.transfer(key)) for key in sorted({
                     item["transfer_id"] for item in claims if item["transfer_id"]
                 })]}
 
@@ -240,6 +248,8 @@ class ProjectGateway:
             device_id, endpoint = target.get("device_id"), target.get("endpoint")
         elif not device_id and not endpoint:
             raise ValueError("select --device-id or --endpoint, or request automatic selection")
+        if device_id in self.blocked:
+            raise OwnershipConflict("device is draining for handoff")
         if device_id:
             claim = self.registry.claim("device:" + str(device_id))
             if claim:
@@ -257,6 +267,10 @@ class ProjectGateway:
                     # Its existing supervisors own reconnect. Never substitute
                     # a different board while this identity is temporarily absent.
                     return await self.wait_device(str(device_id), "", float(body.get("timeout", 10)))
+        if endpoint:
+            claim = self.registry.claim(str(endpoint))
+            if claim and claim.get("device_id") in self.blocked:
+                raise OwnershipConflict("device is draining for handoff")
         candidates = self.hub.list_endpoints()
         if automatic_metadata is not None:
             candidates = [automatic_metadata]
@@ -270,10 +284,14 @@ class ProjectGateway:
             elif not candidates:
                 metadata = await to_thread(resolve_usb_port, str(endpoint))
                 if not iris_usb_allowed(metadata, explicit=True):
-                    raise ValueError("endpoint is reserved for the Recovery maintenance workflow")
+                    raise ValueError("endpoint is reserved for the ROM recovery workflow")
                 candidates = [{"endpoint": usb_endpoint(metadata), **metadata}]
         else:
             candidates = await identity_candidates(self, str(device_id))
+        for candidate in candidates:
+            claim = self.registry.claim(candidate["endpoint"])
+            if claim and claim.get("device_id") in self.blocked:
+                raise OwnershipConflict("device is draining for handoff")
         if not candidates:
             self.selection_error("No available endpoint for the selected Device ID.", [])
         return await admit_candidates(self, candidates, str(device_id) if device_id else None,
@@ -293,10 +311,16 @@ class ProjectGateway:
                 raise OwnershipConflict("transfer ID already describes a different request")
             if existing["state"] != "preparing":
                 return existing
-        if self.closing or self.busy(device_id):
-            raise OwnershipConflict("device is busy; retry after the active operation finishes")
+        self.registry._require("device:" + device_id, ("preparing",) if existing else ("owned",))
+        if self.closing:
+            raise OwnershipConflict("project session is draining")
+        timeout = drain_timeout(body)
+        if self.busy(device_id) and not body.get("force"):
+            busy_error(self, device_id)
         self.blocked.add(device_id)
         try:
+            if body.get("force"):
+                await drain_device(self, device_id, timeout)
             self.registry.prepare(device_id, target, transfer_id)
             await self.hub.detach_owned(device_id)
             result = self.registry.offer(transfer_id)
@@ -327,77 +351,6 @@ class ProjectGateway:
         self.audit(result)
         return result
 
-    async def transfer_to(self, body: dict[str, Any]) -> dict[str, Any]:
-        target_id = str(body["target_session_id"])
-        if body.get("transfer_id"):
-            try:
-                previous = self.registry.transfer(str(body["transfer_id"]))
-            except KeyError:
-                previous = None
-            if previous:
-                if (previous["source"], previous["target"], previous["device_id"]) != (
-                    self.registry.session_id, target_id, body["device_id"],
-                ):
-                    raise OwnershipConflict("transfer ID already describes a different request")
-                if previous["state"] == "completed":
-                    return previous
-                if previous["state"] == "aborted":
-                    raise OwnershipConflict("transfer was aborted; create a new transfer request")
-        target = self.registry.session(target_id)
-        address = urlsplit(target["url"])
-        if not target["alive"] or address.scheme != "http" or address.hostname != "127.0.0.1":
-            raise OwnershipConflict("target must be a live local project session")
-        async with ClientSession(timeout=ClientTimeout(total=30)) as client:
-            async with client.get(target["url"] + "/v1/project") as response:
-                state = await response.json()
-                if (response.status != 200 or state.get("session", {}).get("session_id") != target_id
-                        or state.get("capability") != CAPABILITY or state.get("closing")):
-                    raise OwnershipConflict("target is unavailable or its identity changed")
-            # Missing credentials fail before disrupting the source.
-            claims = [item for item in self.registry.claims() if item["device_id"] == body["device_id"]]
-            if any(item["metadata"].get("pairing") == "hmac" for item in claims) and not state.get("pairing_configured"):
-                raise OwnershipConflict("configure the target's pairing token first")
-            async with self.receiver_lease(client, target, state):
-                transfer = await self.prepare(body)
-                async with client.post(target["url"] + "/v1/project/accept", json={"transfer_id": transfer["transfer_id"]}) as response:
-                    result = await response.json()
-                    if response.status != 200:
-                        raise OwnershipConflict(f"Transfer {transfer['transfer_id']} remains reserved; query its status and retry acceptance: {result}")
-                    return result["transfer"]
-
-    @contextlib.asynccontextmanager
-    async def receiver_lease(self, client: ClientSession, target: dict[str, Any], state: dict[str, Any]):
-        """Keep the receiver alive from preflight through validated acceptance."""
-        if (state.get("lifecycle") or {}).get("capability") != LIFECYCLE_CAPABILITY:
-            if not target.get("persistent"):
-                raise OwnershipConflict("receiver does not support shared client lifetimes")
-            yield
-            return
-        body = {"session_id": target["session_id"], "kind": "transfer", "command": "device transfer"}
-        async with client.post(target["url"] + "/v1/project/clients", json=body) as response:
-            if response.status != 200:
-                raise OwnershipConflict("receiver could not retain a transfer client")
-            lease = await response.json()
-        body.update(lease)
-        path = target["url"] + "/v1/project/clients/" + lease["client_id"]
-
-        async def renew() -> None:
-            while True:
-                await asyncio.sleep(lease["renew_seconds"])
-                async with client.post(path + "/renew", json=body) as response:
-                    if response.status != 200:
-                        return
-
-        task = asyncio.create_task(renew())
-        try:
-            yield
-        finally:
-            task.cancel()
-            await asyncio.gather(task, return_exceptions=True)
-            with contextlib.suppress(ClientError, asyncio.TimeoutError):
-                async with client.post(path + "/release", json=body, timeout=ClientTimeout(total=2)):
-                    pass
-
     def register_routes(self, app: web.Application) -> None:
         async def clients(request: web.Request) -> web.Response:
             if not request_is_loopback(request):
@@ -418,6 +371,7 @@ class ProjectGateway:
             self.clients.release(client_id, token)
             return web.json_response({"released": client_id})
 
+        register_takeover_routes(app, self)
         app.router.add_post("/v1/project/clients", clients)
         app.router.add_post("/v1/project/clients/{client_id}/{verb:renew|release}", clients)
 
@@ -426,76 +380,44 @@ class ProjectGateway:
                 raise PermissionError("project session control is local-only")
             action = request.match_info.get("action", "status")
             if request.method == "GET":
-                if action == "status":
-                    return web.json_response(self.snapshot())
-                return web.json_response({"transfer": self.registry.transfer(action)})
+                return web.json_response(self.snapshot())
             body = await request.json()
+            if not isinstance(body, dict):
+                raise TypeError("project request must be an object")
             async with self.control_lock:
-                if action in {"release", "transfer"} and body.get("auto") and not (body.get("device_id") or body.get("endpoint")):
-                    # A retry must remain bound to the original transfer even if
-                    # ownership has already moved to the receiver.
-                    previous = None
-                    if action == "transfer" and body.get("transfer_id"):
-                        try:
-                            previous = self.registry.transfer(str(body["transfer_id"]))
-                        except KeyError:
-                            pass
-                    target = {"device_id": previous["device_id"]} if previous else self.owned_target()
-                    if target is None or (action == "transfer" and not target.get("device_id")):
-                        self.selection_error("No uniquely identified owned device is available for this operation.", [])
+                if action == "release" and body.get("auto") and not (body.get("device_id") or body.get("endpoint")):
+                    target = self.owned_target()
+                    if target is None:
+                        self.selection_error("No uniquely identified owned device is available.", [])
                     body.update(target)
                 if action == "acquire":
                     return web.json_response({"device": await self.acquire(body)})
-                if action == "prepare":
-                    return web.json_response({"transfer": await self.prepare(body)})
-                if action == "transfer":
-                    body.setdefault("transfer_id", str(uuid.uuid4()))
-                    try:
-                        return web.json_response({"transfer": await self.transfer_to(body)})
-                    except (ClientError, asyncio.TimeoutError) as error:
-                        raise OwnershipConflict(
-                            f"Transfer {body['transfer_id']}: peer response unavailable; query its durable status before retrying"
-                        ) from error
-                if action == "accept":
-                    return web.json_response({"transfer": await self.accept(str(body["transfer_id"]))})
-                if action == "abort":
-                    transfer_id = str(body["transfer_id"])
-                    before = self.registry.transfer(transfer_id)
-                    if before["source"] != self.registry.session_id:
-                        raise OwnershipConflict("only the source can abort")
-                    await self.hub.detach_owned(before["device_id"])
-                    result = self.registry.abort(transfer_id)
-                    self.audit(result)
-                    return web.json_response({"transfer": result})
                 if action == "release":
                     resource = str(body.get("endpoint") or ("device:" + str(body["device_id"])))
                     claim = self.registry._require(resource, ("owned",))
                     device_id = claim["device_id"]
-                    reasons = self.keepalive_reasons()
-                    reasons["requests"] = max(0, reasons["requests"] - 1)
-                    busy = self.busy(device_id) if device_id else any(reasons.values())
-                    if busy:
-                        raise OwnershipConflict("device is busy")
-                    self.blocked.add(device_id or resource)
-                    try:
-                        if device_id:
-                            await self.hub.detach_owned(device_id)
-                        else:
-                            await self.hub._remove_endpoint(resource)
-                        self.registry.release(resource)
-                    finally:
-                        self.blocked.discard(device_id or resource)
-                    return web.json_response({"released": resource})
+                    async with self.device_control[device_id or resource]:
+                        self.registry._require(resource, ("owned",))
+                        reasons = self.keepalive_reasons()
+                        reasons["requests"] = max(0, reasons["requests"] - 1)
+                        busy = self.busy(device_id) if device_id else any(reasons.values())
+                        if busy:
+                            raise OwnershipConflict("device is busy")
+                        self.blocked.add(device_id or resource)
+                        try:
+                            if device_id:
+                                await self.hub.detach_owned(device_id)
+                            else:
+                                await self.hub._remove_endpoint(resource)
+                            self.registry.release(resource)
+                        finally:
+                            self.blocked.discard(device_id or resource)
+                        return web.json_response({"released": resource})
                 if action == "reconcile":
                     resource = str(body.get("endpoint") or ("device:" + str(body["device_id"])))
                     self.registry.reconcile_orphan(resource)
                     return web.json_response({"reconciled": resource})
-                if action == "reconcile-transfer":
-                    result = self.registry.reconcile_transfer(str(body["transfer_id"]))
-                    self.audit(result)
-                    return web.json_response({"transfer": result})
                 raise ValueError("unknown project action")
 
         app.router.add_get("/v1/project", handle)
-        app.router.add_get("/v1/project/transfers/{action}", handle)
-        app.router.add_post("/v1/project/{action}", handle)
+        app.router.add_post("/v1/project/{action:acquire|release|reconcile}", handle)

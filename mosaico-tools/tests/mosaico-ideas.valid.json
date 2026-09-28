@@ -1,0 +1,6 @@
+{
+  "schema": "mosaico-ideas/project-upload/v1",
+  "project": {"title": "Temperature sensor", "categories": ["sensors"], "boards": [], "tags": ["iris"], "license": "MIT", "external_links": []},
+  "content": {"readme": "README.md", "covers": ["cover.png"], "resources": [], "attachments": ["circuit.pdf"]},
+  "release": {"changelog": "Improve reconnect behavior"}
+}

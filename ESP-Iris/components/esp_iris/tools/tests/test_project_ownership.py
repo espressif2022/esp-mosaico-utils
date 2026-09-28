@@ -7,6 +7,7 @@ import uuid
 from unittest.mock import patch
 
 import pytest
+from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 from test_hub import SupervisorLink
 from test_usb_ownership import until
@@ -131,8 +132,8 @@ sys.stdin.read()
         process.communicate(timeout=5)
 
 
-@pytest.mark.parametrize("automatic", [False, True])
-def test_discovery_reconnect_and_transfer_with_third_contender(tmp_path, automatic):
+@pytest.mark.parametrize("by_endpoint", [False, True])
+def test_discovery_reconnect_and_transfer_with_third_contender(tmp_path, by_endpoint):
     async def scenario():
         registries = [registry(tmp_path / "registry", name) for name in ("a", "b", "c")]
         stores = [GatewayStore(tmp_path / name) for name in ("a", "b", "c")]
@@ -185,15 +186,13 @@ def test_discovery_reconnect_and_transfer_with_third_contender(tmp_path, automat
                     for client, reg in zip(clients, registries):
                         await client.start_server()
                         reg.set_url(str(client.make_url("")).rstrip("/"))
-                    body = {"device_id": D, "target_session_id": "a", "transfer_id": str(uuid.uuid4())}
-                    if automatic:
-                        body.pop("device_id")
-                        body["auto"] = True
-                    response = await clients[1].post("/v1/project/transfer", json=body)
+                    body = {"endpoint": E} if by_endpoint else {"device_id": D}
+                    body["takeover_id"] = str(uuid.uuid4())
+                    response = await clients[0].post("/v1/project/takeovers", json=body)
                     assert response.status == 200, await response.text()
                     result = await response.json()
-                    assert result["transfer"]["state"] == "completed"
-                    response = await clients[1].post("/v1/project/transfer", json=body)
+                    assert result["takeover"]["state"] == "completed"
+                    response = await clients[0].post("/v1/project/takeovers", json=body)
                     assert await response.json() == result
                     assert len(opened) == 4
                 finally:
@@ -224,13 +223,15 @@ def test_http_blocks_non_owner_and_transfer_when_busy(tmp_path):
             assert response.status == 409
             reg.acquire(E, {})
             reg.bind(E, D)
-            await service.operations.acquire_maintenance(D, 1)
-            response = await client.post("/v1/project/prepare", json={
-                "device_id": D, "target_session_id": "b", "transfer_id": str(uuid.uuid4()),
-            })
-            assert response.status == 409
+            gate = asyncio.Event()
+            await service.operations.submit(D, __import__("iris_gateway.security", fromlist=["Actor"]).Actor("local", "test"),
+                                            "host.recovery", {}, gate.wait, exclusive_resources=(D,))
+            with pytest.raises(web.HTTPConflict):
+                await service.project.prepare({"device_id": D, "target_session_id": "b", "transfer_id": str(uuid.uuid4())})
             assert reg.claim(E)["state"] == "owned"
-            service.operations.release_maintenance(D)
+            gate.set()
+            while service.operations._pending:
+                await asyncio.sleep(0)
             service.project.observe({"kind": "job", "device_id": D, "job_id": 7, "job_state": "running"})
             assert service.project.busy(D)
 
@@ -242,7 +243,7 @@ def test_http_blocks_non_owner_and_transfer_when_busy(tmp_path):
                 assert response.status == 200
             assert not service.project.busy(D)
             response = await client.post("/v1/project/stop", json={})
-            assert response.status == 400
+            assert response.status == 404
             assert not service.project.closing
             response = await client.post("/v1/project/acquire", json={
                 "endpoint": "tcp:127.0.0.1:29999", "pairing_token": "invalid",
@@ -317,33 +318,6 @@ def test_both_participants_crash_requires_explicit_project_reconciliation(tmp_pa
         c.close()
 
 
-def test_maintenance_restore_preserves_reservation_and_project_exclusivity(tmp_path):
-    a = registry(tmp_path, "a")
-    other = registry(tmp_path, "other")
-    duplicate = OwnershipRegistry(tmp_path)
-    metadata = {"endpoint": E}
-    try:
-        with pytest.raises(RuntimeError):
-            duplicate.register("new-a", "a", "/projects/a", "i")
-        a.acquire(E, metadata)
-        a.bind(E, D)
-        a.maintenance(E, True)
-        with pytest.raises(OwnershipConflict):
-            other.restore_maintenance(metadata)
-        a.close()
-        with pytest.raises(OwnershipConflict):
-            other.reconcile_orphan(E)
-        with pytest.raises(OwnershipConflict):
-            other.restore_maintenance(metadata)
-        duplicate.register("new-a", "a", "/projects/a", "i")
-        duplicate.restore_maintenance(metadata)
-        assert duplicate.claim(E)["owner"] == "new-a"
-        assert not duplicate.allowed(E)
-        duplicate.maintenance(E, False)
-        assert duplicate.allowed("device:" + D)
-    finally:
-        duplicate.close(clean=True)
-        other.close()
 
 
 def test_device_generation_increases_when_transport_changes(tmp_path):

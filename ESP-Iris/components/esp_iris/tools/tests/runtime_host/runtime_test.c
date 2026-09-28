@@ -144,6 +144,110 @@ static void test_coalesced_frames(void) {
         }
     }
 }
+
+enum worker_load { WORKER_TX_BLOCKED, WORKER_CONTINUOUS, WORKER_NOTIFICATIONS, WORKER_IDLE };
+static enum worker_load worker_load;
+static iris_runtime_t *worker_runtime;
+static unsigned worker_polls, worker_delays, worker_waits;
+static int64_t worker_last_block_us;
+
+static void worker_poll(iris_runtime_t *runtime)
+{
+    assert(++worker_polls < 100); /* Bound failures in the real worker loop. */
+    now_us += 1000;
+    if (worker_load == WORKER_CONTINUOUS) {
+        incoming_size = incoming_offset = outgoing_size = 0;
+        for (unsigned i = 0; i < 4; ++i) {
+            append_control(ESP_IRIS_CONTROL_PING, worker_polls * 4 + i, NULL, 0);
+        }
+    }
+    if (worker_polls == 65) runtime->running = false;
+}
+
+static void worker_delay(unsigned ticks)
+{
+    assert(ticks > 0);
+    /* Include dense notifications in the bound: they must not defeat the
+     * worker's periodic opportunity for lower-priority/Idle tasks to run. */
+    assert(now_us - worker_last_block_us <= 21000);
+    ++worker_delays;
+    now_us += ticks * (1000000 / configTICK_RATE_HZ);
+    worker_last_block_us = now_us;
+    if (worker_load == WORKER_TX_BLOCKED && worker_delays == 3) {
+        write_limit = 7; /* Drain the original frame through partial writes. */
+    }
+}
+
+static unsigned worker_notify_take(unsigned ticks)
+{
+    if (ticks == 0) return 1;
+    ++worker_waits;
+    if (worker_load == WORKER_NOTIFICATIONS) return 1;
+    if (worker_load == WORKER_TX_BLOCKED) {
+        assert(worker_runtime->tx_frames == 1);
+        worker_runtime->running = false;
+    } else if (worker_load == WORKER_IDLE && worker_waits == 4) {
+        worker_runtime->running = false;
+    }
+    now_us += ticks * (1000000 / configTICK_RATE_HZ);
+    worker_last_block_us = now_us;
+    return 0;
+}
+
+static void test_worker_scheduling(void)
+{
+    for (worker_load = WORKER_TX_BLOCKED; worker_load <= WORKER_IDLE; ++worker_load) {
+        iris_runtime_t rt = {
+            .session_id = 123, .hello_acked = true, .running = true,
+            .session_state = IRIS_SESSION_READY, .link_connected = true,
+            .next_hello_us = INT64_MAX,
+        };
+#if CONFIG_ESP_IRIS_TRANSPORT_USB
+        rt.transport.active_ops = &g_iris_usb_transport_ops;
+        rt.transport.active_state = &rt.transport.usb;
+#else
+        rt.transport.active_ops = &g_iris_tcp_transport_ops;
+        rt.transport.active_state = &rt.transport.tcp;
+#endif
+        rt.transport.committed = true;
+        candidate = false;
+        worker_runtime = &rt;
+        now_us = worker_last_block_us = 0;
+        worker_polls = worker_delays = worker_waits = 0;
+        incoming_size = incoming_offset = outgoing_size = 0;
+        read_limit = sizeof(incoming);
+        write_limit = sizeof(outgoing);
+        if (worker_load == WORKER_TX_BLOCKED) {
+            write_limit = 0;
+            assert(queue_frame(&rt, ESP_IRIS_CHANNEL_CONTROL, ESP_IRIS_CONTROL_PONG,
+                ESP_IRIS_FLAG_RESPONSE, 42, 0, NULL, 0) == ESP_OK);
+        }
+        transport_poll_hook = worker_poll;
+        notify_take_hook = worker_notify_take;
+        task_delay_hook = worker_delay;
+        iris_worker(&rt);
+        transport_poll_hook = NULL;
+        notify_take_hook = NULL;
+        task_delay_hook = NULL;
+        if (worker_load == WORKER_TX_BLOCKED) {
+            assert(worker_delays == 3 && worker_polls < 20);
+            iris_decoded_frame_t response;
+            assert(outgoing_size > 0 && outgoing[outgoing_size - 1] == 0);
+            assert(iris_frame_decode_in_place(outgoing, outgoing_size - 1, &response) == ESP_OK);
+            assert(response.header.type == ESP_IRIS_CONTROL_PONG);
+            assert(response.header.request_id == 42);
+        } else if (worker_load == WORKER_CONTINUOUS) {
+            assert(worker_delays >= 3 && worker_delays < 10);
+            assert(rt.rx_frames == 65 * 4 && rt.tx_frames == 65 * 4);
+        } else if (worker_load == WORKER_NOTIFICATIONS) {
+            assert(worker_delays >= 3 && worker_waits > 0);
+        } else {
+            assert(worker_delays == 0 && worker_waits == 4);
+        }
+    }
+    worker_runtime = NULL;
+}
+
 static void deliver(iris_runtime_t *runtime, const iris_decoded_frame_t *frame) {
     handle_frame(runtime, frame, 0);
     executor_run_one();
@@ -816,7 +920,7 @@ static void test_external_allocation_failure(void) {
     fail_task_create = false;
 }
 int main(void) {
-    test_rpc_lengths(); test_coalesced_frames(); test_replay_and_reopen();
+    test_rpc_lengths(); test_coalesced_frames(); test_worker_scheduling(); test_replay_and_reopen();
     test_claim_timeout(); test_executor_rpc(); test_fragmented_malformed_corpus();
 #if CONFIG_ESP_IRIS_OTA
     test_executor_ota();

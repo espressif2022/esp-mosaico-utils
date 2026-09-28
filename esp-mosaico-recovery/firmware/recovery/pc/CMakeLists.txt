@@ -22,7 +22,7 @@ endif()
 add_subdirectory("${ESP_GSP_COMPONENT_DIR}/tools/sim_bridge" sim_bridge)
 gsp_add_backend(vibe_backend
     PROFILE "${CMAKE_CURRENT_LIST_DIR}/../ui/profile.yaml"
-    SOURCES ../main/vibe_ui.c platform_pc.c
+    SOURCES ../main/vibe_ui.c ../main/vibe_transfer.c platform_pc.c
     INCLUDE_DIRECTORIES ../main
     SCENES ../ui/main.json)
 

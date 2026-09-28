@@ -20,7 +20,7 @@ def pack(source, output):
     # Spend a few seconds on the host to save Flash without changing the ROM
     # decoder or a single decompressed scene/font byte.
     candidates = [zlib.compress(raw, 9),
-                  zopfli.zlib.compress(raw, numiterations=50)]
+                  zopfli.zlib.compress(raw, numiterations=200)]
     for memory in (6, 7, 8, 9):
         for strategy in (zlib.Z_DEFAULT_STRATEGY, zlib.Z_FILTERED):
             encoder = zlib.compressobj(9, zlib.DEFLATED, 15, memory, strategy)

@@ -1,4 +1,5 @@
 import { useDeferredValue, useMemo, useState } from "react";
+import { deviceStateLabel } from "./deviceState";
 import type { Device } from "./types";
 
 export type Page = "devices" | "files" | "records" | "settings" | "docs";
@@ -96,12 +97,12 @@ export function DeviceRail({ devices, selectedId, onSelect, onRemove, language }
                 <strong>{device.alias || device.suggested_alias || device.device_id.slice(0, 12)}</strong>
                 <small>{device.device_id.slice(0, 12)}</small>
                 {device.hardware_mac && <small>{device.hardware_mac}</small>}
-                <span><i className={`status-dot ${device.connected ? "online" : "offline"}`} />{device.connected ? "在线" : "离线"} · {firmwareModeLabel(device.firmware_mode)}</span>
+                <span><i className={`status-dot ${device.state}`} />{deviceStateLabel(device.state, language)} · {firmwareModeLabel(device.firmware_mode)}</span>
                 <small>{device.transport_name || device.endpoint || "传输未知"}</small>
               </span>
               <em>{device.app_version || "—"}</em>
             </button>
-            {!device.connected && <button className="device-remove" disabled={removingId === device.device_id} aria-label={`移除离线设备 ${device.alias || device.suggested_alias || device.device_id}`} onClick={() => void remove(device)}>{removingId === device.device_id ? "移除中…" : "移除"}</button>}
+            {device.state === "offline" && <button className="device-remove" disabled={removingId === device.device_id} aria-label={`移除离线设备 ${device.alias || device.suggested_alias || device.device_id}`} onClick={() => void remove(device)}>{removingId === device.device_id ? "移除中…" : "移除"}</button>}
           </div>
         ))}
         {removeError && <p className="rail-error">{removeError}</p>}
@@ -113,6 +114,7 @@ export function DeviceRail({ devices, selectedId, onSelect, onRemove, language }
 }
 
 export function firmwareModeLabel(mode?: Device["firmware_mode"]) {
+  if (mode === "rom") return "ROM 下载";
   if (mode === "normal") return "正常固件";
   if (mode === "recovery") return "恢复固件";
   return "模式未知";

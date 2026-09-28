@@ -17,6 +17,37 @@ static void format(vibe_ui_t *s, uint16_t bind, const char *fmt, ...)
     (void)esp_gsp_set_text(s->ui, bind, text);
 }
 #define FORMAT(s, name, ...) format(s, GSP_VIBE_BIND_##name, __VA_ARGS__)
+static void transfer_text(vibe_ui_t *s)
+{
+    const vibe_snapshot_t *v = &s->snapshot;
+    const vibe_transfer_t *t = &v->transfer;
+    const uint64_t unit = (t->total ? t->total : t->received) >= 1024 * 1024 ? 1024 * 1024 : 1024;
+    const char *suffix = unit == 1024 ? "KiB" : "MiB";
+    const unsigned received = (unsigned)(t->received * 100 / unit);
+    const unsigned total = (unsigned)(t->total * 100 / unit);
+    if (t->total) {
+        FORMAT(s, UPDATE_PERCENT, "%u%%", vibe_transfer_permille(t->received, t->total) / 10);
+        FORMAT(s, UPDATE_BYTES, "%u.%02u / %u.%02u %s", received / 100, received % 100, total / 100, total % 100, suffix);
+    } else {
+        TEXT(s, UPDATE_PERCENT, "--");
+        FORMAT(s, UPDATE_BYTES, "%u.%02u %s / --", received / 100, received % 100, suffix);
+    }
+    (void)esp_gsp_set_value(s->ui, GSP_VIBE_BIND_PROGRESS, vibe_transfer_permille(t->received, t->total) / 10);
+    const char *verb = !strcmp(v->update_owner, "Bridge") ? "Download" : !strcmp(v->update_owner, "NAND") ? "Read" : "Receive";
+    if (!s->rate.valid) FORMAT(s, UPDATE_RATE, "%s: --", verb);
+    else {
+        const uint64_t rate_unit = s->rate.bytes_per_second >= 1024 * 1024 ? 1024 * 1024 : 1024;
+        const unsigned tenths = (unsigned)(s->rate.bytes_per_second * 10 / rate_unit);
+        FORMAT(s, UPDATE_RATE, "%s: %u.%u %s/s", verb, tenths / 10, tenths % 10, rate_unit == 1024 ? "KiB" : "MiB");
+    }
+    if (t->component_count && t->component_id)
+        FORMAT(s, UPDATE_COMPONENT, "Component %u: %u%% | %u/%u verified", t->component_id,
+            vibe_transfer_permille(t->component_received, t->component_size) / 10,
+            t->completed_components, t->component_count);
+    else if (t->component_count)
+        FORMAT(s, UPDATE_COMPONENT, "%u/%u components verified", t->completed_components, t->component_count);
+    else TEXT(s, UPDATE_COMPONENT, "Application image");
+}
 static int command(vibe_ui_t *s, vibe_command_t cmd, const char *a, const char *b)
 {
     return s->services.command(s->services.ctx, cmd, a, b);
@@ -223,6 +254,7 @@ void vibe_ui_poll(vibe_ui_t *s)
     size_t ap_count = s->snapshot.ap_count, bundle_count = s->snapshot.bundle_count;
     s->services.snapshot(s->services.ctx, &s->snapshot);
     vibe_snapshot_t *v = &s->snapshot;
+    vibe_rate_sample(&s->rate, &v->transfer);
     if (!s->prefetch_attempted && !v->updating &&
         v->network == VIBE_NET_CONNECTED && v->ip[0]) {
         s->prefetch_attempted = true;
@@ -242,12 +274,14 @@ void vibe_ui_poll(vibe_ui_t *s)
         if (s->page != VIBE_UPDATE) show(s, VIBE_UPDATE);
         TEXT(s, UPDATE_TITLE, v->update_title); TEXT(s, UPDATE_DETAIL, v->update_detail);
         TEXT(s, UPDATE_OWNER, v->update_owner); TEXT(s, UPDATE_VERIFIED, v->update_verified);
-        unsigned progress = v->progress > 1000 ? 1000 : v->progress;
-        FORMAT(s, UPDATE_PERCENT, "%u%%", progress / 10);
-        (void)esp_gsp_set_value(s->ui, GSP_VIBE_BIND_PROGRESS, progress / 10);
+        transfer_text(s);
     } else if (v->update_terminal && v->update_revision != s->acknowledged_update) {
         s->acknowledged_update = v->update_revision;
-        TEXT(s, RESULT_TITLE, v->update_title); TEXT(s, RESULT_DETAIL, v->update_detail);
+        TEXT(s, RESULT_TITLE, v->update_title);
+        if (v->update_failed && v->transfer.total)
+            FORMAT(s, RESULT_DETAIL, "%s\nTransferred: %u%%", v->update_detail,
+                vibe_transfer_permille(v->transfer.received, v->transfer.total) / 10);
+        else TEXT(s, RESULT_DETAIL, v->update_detail);
         show(s, VIBE_RESULT);
     }
     switch (s->page) {
@@ -272,7 +306,14 @@ void vibe_ui_poll(vibe_ui_t *s)
         else TEXT(s, PAIRING_TOKEN, "Pairing token unavailable");
         break;
     case VIBE_BRIDGE:
-        TEXT(s, BRIDGE_CODE, v->bridge_code[0] ? v->bridge_code : "----------");
+        {
+            const char *code = v->bridge_code[0] ? v->bridge_code : "----------";
+            const bool compact = strlen(code) > 10 || strspn(code, "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-") != strlen(code);
+            /* Use a real blank glyph: empty text can restore the authored
+             * placeholder in the renderer instead of clearing this label. */
+            TEXT(s, BRIDGE_CODE, compact ? " " : code);
+            TEXT(s, BRIDGE_CODE_COMPACT, compact ? code : " ");
+        }
         if (!strcmp(v->bridge_state, "NOT_CONFIGURED")) TEXT(s, BRIDGE_DETAIL, "Bridge URL or board ID not configured");
         else if (!strcmp(v->bridge_state, "WAITING_NETWORK")) TEXT(s, BRIDGE_DETAIL, "Waiting for Wi-Fi connection");
         else if (v->bridge_code[0]) FORMAT(s, BRIDGE_DETAIL, "Pair within %us", v->bridge_seconds);

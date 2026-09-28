@@ -1,5 +1,5 @@
 CONFIG_APP_PROJECT_VER_FROM_CONFIG=y
-CONFIG_APP_PROJECT_VER="0.1"
+CONFIG_APP_PROJECT_VER="0.1.2"
 
 # ESP-Iris owns the separate TinyUSB High-Speed device. Keep UART as the
 # primary blocking console and avoid the built-in USB Serial/JTAG controller.
@@ -34,7 +34,29 @@ CONFIG_ESP_IRIS_RECOVERY_ABI=1
 CONFIG_ESP_IRIS_HEALTH_TIMEOUT_MS=45000
 
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+# Bridge keeps a download and a cancellation TLS connection alive together.
+# Recovery has PSRAM XIP enabled; leave internal/DMA RAM for Wi-Fi and AES.
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 
 # Wi-Fi's SHA1 passphrase derivation must not rely on a peripheral that can
 # return an all-zero digest and abort Recovery during startup.
 # CONFIG_MBEDTLS_HARDWARE_SHA is not set
+
+# Use external RAM for networking and ordinary allocations; retain a reserve
+# for DMA, cache-disabled Flash writers, and RTOS control blocks.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0
+CONFIG_SPIRAM_MALLOC_RESERVE_INTERNAL=65536
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+CONFIG_SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY=y
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=64
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER=y
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=8
+CONFIG_ESP_WIFI_RX_BA_WIN=16
+# A 5.6 KiB window caps WAN throughput even when the radio link is fast.
+CONFIG_LWIP_TCP_WND_DEFAULT=65535
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=48
+CONFIG_MDNS_MEMORY_ALLOC_SPIRAM=y
+CONFIG_MDNS_TASK_CREATE_FROM_SPIRAM=y
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+CONFIG_ESP_IRIS_TASK_MEMORY_OBSERVATION=y

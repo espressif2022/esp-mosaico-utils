@@ -59,6 +59,9 @@ def _paths(value: Any, workspace: WorkspaceConfig, template: Path) -> dict[str, 
         raise EnvironmentError("Template paths must be an object.")
     anchors = {
         "workspace": workspace.root,
+        "utils": workspace.recovery_project.parents[2],
+        "tools": workspace.recovery_project.parents[2] / "mosaico-tools",
+        "engine": workspace.raylib_path or workspace.root / "submodule/raylib-lite-engine",
         "template": template.parent,
         "bsp": workspace.bsp_path,
         "esp_iris": workspace.esp_iris_path,

@@ -237,8 +237,8 @@ def test_finished_operation_requires_this_session_and_terminal_evidence(
     tmp_path, monkeypatch, status, created_ns, finished_ns, expected,
 ):
     monkeypatch.syspath_prepend(str(TOOLS.parent / "ESP-Iris/components/esp_iris/tools"))
-    from iris_gateway.store import GatewayStore
     from iris_gateway.client import LocalProject
+    from iris_gateway.store import GatewayStore
 
     monkeypatch.setattr("mosaico_cli.session_runtime.state_root", lambda name: tmp_path / name)
     follower = SessionScope()
@@ -277,10 +277,10 @@ def test_status_without_gateway_does_not_bootstrap_or_spawn(tmp_path, monkeypatc
 
 @pytest.mark.parametrize("action", [
     ["claim", "--endpoint", "usb:location=1-2"],
+    ["takeover", "start", "--endpoint", "usb:location=1-2", "--force"],
     ["release", "--device-id", "board"],
     ["reconcile", "--device-id", "board"],
-    ["transfer", "start", "--device-id", "board", "--to-session", "other"],
-    ["transfer", "status", "--transfer-id", "t"],
+    ["takeover", "status", "--takeover-id", "34316aaf-5c53-49c0-9d71-44ad598f20ce"],
 ])
 def test_ownership_without_gateway_requests_shared_start(tmp_path, monkeypatch, capsys, action):
     from mosaico_cli.cli import main
@@ -290,7 +290,7 @@ def test_ownership_without_gateway_requests_shared_start(tmp_path, monkeypatch, 
     monkeypatch.setattr("mosaico_cli.gateway._pinned_source_revision", lambda path: "test-revision")
     with patch("mosaico_cli.gateway.ensure_iris_tools", side_effect=EnvironmentError("bootstrap requested")) as bootstrap, \
             patch("mosaico_cli.session_runtime.subprocess.Popen") as spawn:
-        expected = 4 if action[:2] == ["transfer", "status"] else 3
+        expected = 4 if action[:2] == ["takeover", "status"] else 3
         assert main(["--workspace", str(tmp_path), "iris", *action, "--json"], tool_root=TOOLS) == expected
     assert json.loads(capsys.readouterr().err)["error"] == ("gateway_not_running" if expected == 4 else "environment_error")
     assert bootstrap.call_count == (0 if expected == 4 else 1)
@@ -396,3 +396,64 @@ def test_empty_global_query_does_not_create_state_or_resolve_project(tmp_path, m
     assert not (tmp_path / "state").exists()
     project.assert_not_called()
     bootstrap.assert_not_called()
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_takeover_cli_submits_to_receiver_and_retains_id_on_lost_response(tmp_path, monkeypatch, capsys, fails):
+    from mosaico_cli.cli import main
+
+    workspace(tmp_path)
+    takeover_id = "34316aaf-5c53-49c0-9d71-44ad598f20ce"
+    session = Mock(connection_args=("--url", "http://127.0.0.1:10000"))
+    result = {"takeover": {"takeover_id": takeover_id, "state": "completed"}}
+    with patch("mosaico_cli.gateway.ensure_gateway", return_value=session), \
+            patch("mosaico_cli.session_runtime.request", side_effect=DeviceError("lost response") if fails else None,
+                  return_value=result) as request_mock:
+        status = main(["--workspace", str(tmp_path), "iris", "takeover", "start", "--project", "projects/b",
+                       "--endpoint", "/dev/ttyACM0", "--force", "--timeout", "60",
+                       "--takeover-id", takeover_id, "--json"], tool_root=TOOLS)
+    request_mock.assert_called_once_with("http://127.0.0.1:10000", "/v1/project/takeovers", {
+        "device_id": None, "endpoint": "/dev/ttyACM0", "force": True,
+        "timeout": 60, "takeover_id": takeover_id,
+    }, timeout=105)
+    output = capsys.readouterr()
+    if fails:
+        assert status != 0
+        assert json.loads(output.err)["details"]["takeover_id"] == takeover_id
+    else:
+        assert status == 0 and json.loads(output.out) == result
+
+
+@pytest.mark.parametrize("action", ["status", "resume", "abort", "reconcile"])
+def test_takeover_lifecycle_commands_use_record_routes(tmp_path, capsys, action):
+    from mosaico_cli.cli import main
+
+    workspace(tmp_path)
+    takeover_id = "34316aaf-5c53-49c0-9d71-44ad598f20ce"
+    session = Mock(connection_args=("--url", "http://127.0.0.1:10000"))
+    with patch("mosaico_cli.gateway.ensure_gateway", return_value=session) as ensure, \
+            patch("mosaico_cli.session_runtime.request", return_value={"takeover": {}}) as http:
+        assert main(["--workspace", str(tmp_path), "iris", "takeover", action,
+                     "--takeover-id", takeover_id, "--json"], tool_root=TOOLS) == 0
+    assert ensure.call_args.kwargs["start"] is (action != "status")
+    path = "/v1/project/takeovers/" + takeover_id
+    if action == "status":
+        http.assert_called_once_with("http://127.0.0.1:10000", path)
+    else:
+        http.assert_called_once_with("http://127.0.0.1:10000", path + "/" + action, {}, timeout=35)
+    assert json.loads(capsys.readouterr().out) == {"takeover": {}}
+
+
+@pytest.mark.parametrize("argv", [
+    ["iris", "transfer", "start"], ["iris", "transfer", "status"],
+    ["device", "transfer"], ["device", "transfer-status"],
+    ["iris", "takeover", "--endpoint", "/dev/ttyACM0"],
+    ["iris", "takeover", "status", "--transfer-id", "old"],
+    ["iris", "takeover", "status", "--takeover-id", "invalid"],
+])
+def test_removed_transfer_syntax_has_no_compatibility_alias(argv):
+    from mosaico_cli.cli import build_parser
+
+    with pytest.raises(SystemExit) as error:
+        build_parser().parse_args(argv)
+    assert error.value.code == 2

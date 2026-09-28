@@ -16,6 +16,7 @@
 #define IRIS_STDIO_STATIC_BYTES (512U + 4U * sizeof(void *))
 #define IRIS_STOP_TIMEOUT_MS 1000U
 #define IRIS_MAX_TASK_MEMORY_RECORDS 128U
+#define IRIS_WORKER_RUN_BUDGET_US (20LL * 1000LL)
 
 iris_runtime_t g_iris = {
     .transport = {
@@ -916,8 +917,7 @@ static bool pump_link(iris_runtime_t *runtime)
     }
 
     if (runtime->tx_wire_length != 0) {
-        progressed = true;
-        (void)flush_tx(runtime);
+        progressed = flush_tx(runtime) || progressed;
     }
     if (runtime->tx_wire_length == 0 && runtime->disconnect_after_tx) {
         runtime->disconnect_after_tx = false;
@@ -931,6 +931,9 @@ static bool pump_link(iris_runtime_t *runtime)
 static void iris_worker(void *argument)
 {
     iris_runtime_t *runtime = argument;
+    const TickType_t idle_ticks = pdMS_TO_TICKS(10) > 0
+        ? pdMS_TO_TICKS(10) : 1;
+    int64_t yield_deadline_us = esp_timer_get_time() + IRIS_WORKER_RUN_BUDGET_US;
     while (runtime->running) {
         const int64_t active_start_us = esp_timer_get_time();
         iris_crash_recovery_poll(runtime, active_start_us);
@@ -963,15 +966,22 @@ static void iris_worker(void *argument)
         if (stack_free < runtime->task_stack_free_min_bytes) {
             runtime->task_stack_free_min_bytes = stack_free;
         }
-        if (runtime->link_connected &&
-            (progressed || runtime->tx_wire_length != 0)) {
-            /* At a 100 Hz tick rate, pdMS_TO_TICKS(1) is zero and does not
-             * yield. Yield explicitly so TinyUSB can drain the FIFO between
-             * bursts without restoring the old 10 ms per-chunk delay. */
+        const bool tx_blocked = runtime->link_connected &&
+            runtime->tx_wire_length != 0 && !progressed;
+        if (tx_blocked || esp_timer_get_time() >= yield_deadline_us) {
+            /* taskYIELD() cannot schedule lower-priority tasks, including
+             * Idle. Really block on TX backpressure and periodically during
+             * continuous traffic. Use a tick, since pdMS_TO_TICKS(1) can be
+             * zero; notifications must not bypass this fairness interval. */
+            vTaskDelay(1);
+            yield_deadline_us = esp_timer_get_time() + IRIS_WORKER_RUN_BUDGET_US;
+        } else if (runtime->link_connected && progressed) {
             (void)ulTaskNotifyTake(pdTRUE, 0);
             taskYIELD();
-        } else {
-            (void)ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(10));
+        } else if (ulTaskNotifyTake(pdTRUE, idle_ticks) == 0) {
+            /* A timeout guarantees we blocked. An already-pending
+             * notification does not, so keep the deadline in that case. */
+            yield_deadline_us = esp_timer_get_time() + IRIS_WORKER_RUN_BUDGET_US;
         }
     }
     end_session(runtime);

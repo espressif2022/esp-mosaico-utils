@@ -10,6 +10,7 @@ idf_component_register(
         "factory_system_update.c"
         "factory_ui.c"
         "vibe_ui.c"
+        "vibe_transfer.c"
         "vibe_bundle.c"
         "board_display.c"
         "factory_ui_input.c"

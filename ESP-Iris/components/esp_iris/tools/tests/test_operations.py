@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from iris_gateway.observability import MetricsRegistry
-from iris_gateway.operations import DeviceMaintenance, OperationManager
+from iris_gateway.operations import DeviceBusy, OperationManager
 from iris_gateway.security import Actor
 from iris_gateway.state_machine import StateTransitionError
 from iris_gateway.store import GatewayStore
@@ -76,7 +76,7 @@ def test_observe_transition_cancels_queued_operation(tmp_path) -> None:
     asyncio.run(scenario())
 
 
-def test_maintenance_barrier_drains_one_device_and_rejects_later_work(tmp_path) -> None:
+def test_exclusive_operation_drains_one_device_and_rejects_later_work(tmp_path) -> None:
     async def scenario() -> None:
         store = GatewayStore(tmp_path)
 
@@ -98,9 +98,13 @@ def test_maintenance_barrier_drains_one_device_and_rejects_later_work(tmp_path) 
             )
         )
         await started.wait()
-        maintenance = asyncio.create_task(manager.acquire_maintenance("device-a", 1))
+        finished = asyncio.Event()
+        host = asyncio.create_task(manager.execute(
+            "device-a", Actor("agent", "test"), "host.recovery", {}, finished.wait,
+            exclusive_resources=("device-a", "usb:a"),
+        ))
         await asyncio.sleep(0)
-        with pytest.raises(DeviceMaintenance):
+        with pytest.raises(DeviceBusy):
             await manager.execute(
                 "device-a",
                 Actor("agent", "test"),
@@ -118,10 +122,14 @@ def test_maintenance_barrier_drains_one_device_and_rejects_later_work(tmp_path) 
         assert other["status"] == "succeeded"
         release.set()
         await running
-        await maintenance
-        assert manager.maintenance_state("device-a") == "active"
-        manager.release_maintenance("device-a")
-        assert manager.maintenance_state("device-a") is None
+        await asyncio.sleep(0)
+        assert manager.queue_state("device-a")["running"]
+        with pytest.raises(DeviceBusy):
+            await manager.execute("usb:a", Actor("agent", "test"), "host.probe", {}, lambda: asyncio.sleep(0))
+        finished.set()
+        await host
+        assert not manager.queue_state("device-a")["running"]
+        assert not manager._exclusive
         store.close()
 
     asyncio.run(scenario())

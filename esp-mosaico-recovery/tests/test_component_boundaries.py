@@ -43,7 +43,7 @@ def test_install_rejects_old_gateway_before_upload():
         with pytest.raises(EnvironmentError, match="preconditions"):
             run_ota(Mock(), Mock(), device_id="d", image=Path("image.bin"), elf=Path("image.elf"),
                     map_file=Path("image.map"), validation="elf-sha256", timeout=30,
-                    preconditions={"recovery_version": "0.1"})
+                    preconditions={"recovery_version": "0.1.1"})
     assert [call.args[2:] for call in request.call_args_list] == [("health",)]
 
 

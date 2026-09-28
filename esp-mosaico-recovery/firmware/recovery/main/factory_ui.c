@@ -1,3 +1,4 @@
+#include "esp_attr.h"
 // SPDX-License-Identifier: Apache-2.0
 #include "factory_ui.h"
 #include "factory_ui_input.h"
@@ -8,6 +9,7 @@
 #include "esp_check.h"
 #include "esp_iris.h"
 #include "esp_wifi.h"
+#include "esp_timer.h"
 #include "factory_bridge.h"
 #include "factory_network.h"
 #include "factory_nand_update.h"
@@ -22,8 +24,8 @@
 #include <string.h>
 
 static const char *TAG = "vibe_ui";
-static vibe_ui_t s_ui;
-static factory_nand_update_snapshot_t s_nand;
+static EXT_RAM_BSS_ATTR vibe_ui_t s_ui;
+static EXT_RAM_BSS_ATTR factory_nand_update_snapshot_t s_nand;
 static esp_iris_system_update_phase_t s_phase;
 static factory_nand_update_state_t s_nand_state;
 static uint32_t s_ota_job;
@@ -125,6 +127,9 @@ static void service_snapshot(void *ctx, vibe_snapshot_t *out)
     if (system_active) s_update_source = UPDATE_SYSTEM;
     out->updating = out->update_terminal = out->update_failed = false;
     out->progress = 0;
+    memset(&out->transfer, 0, sizeof(out->transfer));
+    out->transfer.now_ms = (uint64_t)esp_timer_get_time() / 1000;
+    out->transfer.source = (uint8_t)s_update_source;
     out->update_revision = s_revision;
     if (s_update_source == UPDATE_NAND) {
         out->updating = s_nand.update_state == FACTORY_NAND_UPDATE_STARTING;
@@ -141,10 +146,14 @@ static void service_snapshot(void *ctx, vibe_snapshot_t *out)
         out->update_terminal = ota.state == ESP_IRIS_JOB_FAILED || ota.state == ESP_IRIS_JOB_CANCELLED;
         out->update_failed = out->update_terminal;
         COPY(update_title, ota.active ? "Updating firmware" : out->update_failed ? "Firmware update failed" : "Firmware verified");
-        if (ota.active) snprintf(out->update_detail, sizeof(out->update_detail), "Receiving application\n%lu / %lu KB", (unsigned long)(ota.received_size / 1024), (unsigned long)(ota.total_size / 1024));
+        if (ota.active) COPY(update_detail, ota.total_size && ota.received_size >= ota.total_size ? "Awaiting image verification" : "Receiving application");
         else if (out->update_failed) snprintf(out->update_detail, sizeof(out->update_detail), "Error 0x%08x - reconnect and retry", (unsigned)ota.result);
         else COPY(update_detail, "Restarting into the application");
-        out->progress = ota.active ? ota.progress_permille : 1000;
+        memcpy(out->transfer.job, &ota.job_id, sizeof(ota.job_id));
+        out->transfer.total = ota.total_size;
+        out->transfer.received = ota.received_size;
+        out->transfer.receiving = ota.active && (!ota.total_size || ota.received_size < ota.total_size);
+        out->progress = vibe_transfer_permille(ota.received_size, ota.total_size);
         COPY(update_owner, iris.transport == ESP_IRIS_TRANSPORT_KIND_USB ? "USB" : "TCP");
         COPY(update_verified, "SHA-256");
         return;
@@ -160,9 +169,22 @@ static void service_snapshot(void *ctx, vibe_snapshot_t *out)
     else if (system.update.phase == ESP_IRIS_SYSTEM_UPDATE_PHASE_COMPONENT_VERIFIED) detail = "Component verified";
     else if (system.update.phase == ESP_IRIS_SYSTEM_UPDATE_PHASE_COMMITTING) detail = "Committing protected system images";
     else if (system.update.phase == ESP_IRIS_SYSTEM_UPDATE_PHASE_COMMITTED) detail = "System images verified and committed";
+    if (system.update.phase == ESP_IRIS_SYSTEM_UPDATE_PHASE_RECEIVING &&
+        system.update.component_size && system.update.component_received >= system.update.component_size)
+        detail = "Awaiting component verification";
     COPY(update_detail, detail);
     if (out->update_failed) snprintf(out->update_detail, sizeof(out->update_detail), "Error 0x%08x - use USB to retry", (unsigned)system.update.result);
-    out->progress = system.update.component_size ? (unsigned)((uint64_t)system.update.component_received * 1000 / system.update.component_size) : 0;
+    memcpy(out->transfer.job, system.update.operation_id, sizeof(out->transfer.job));
+    out->transfer.total = system.total_size;
+    out->transfer.received = system.received_size;
+    out->transfer.component_id = system.update.active_component_id;
+    out->transfer.component_count = system.update.component_count;
+    out->transfer.completed_components = system.update.completed_components;
+    out->transfer.component_received = system.update.component_received;
+    out->transfer.component_size = system.update.component_size;
+    out->transfer.receiving = system.update.phase == ESP_IRIS_SYSTEM_UPDATE_PHASE_RECEIVING &&
+        system.update.component_received < system.update.component_size;
+    out->progress = vibe_transfer_permille(system.received_size, system.total_size);
     COPY(update_owner, system.owner == FACTORY_SYSTEM_UPDATE_OWNER_NAND ? "NAND" : system.owner == FACTORY_SYSTEM_UPDATE_OWNER_BRIDGE ? "Bridge" : out->usb_owner ? "USB" : "TCP");
     COPY(update_verified, "Unsigned");
 }

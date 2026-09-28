@@ -31,44 +31,31 @@ def _check_explicit_port_records_usb_identity():
     assert build_parser().parse_args(["recover", "--recovery-port", "COM14"]).recovery_port == "COM14"
 
 
-def _check_independent_recovery_holds_both_leases_and_verifies_original_device(tmp_path, monkeypatch, failure):
+def _check_independent_recovery_holds_both_endpoints_and_verifies_original_device(tmp_path, monkeypatch, failure):
     arguments = SimpleNamespace(model=None, source="reviewed", device_id="device-a", gateway_profile=None,
                                 timeout=180, dry_run=failure == "dry_run", recovery_port="COM14")
     context = mock.Mock(workspace=WORKSPACE, repository=REPOSITORY, directory=tmp_path,
                         log_path=tmp_path / "run.log")
     session = SimpleNamespace(started_local=False)
-    manifest = {"version": "2.1.1-recovery", "images": {"recovery": {}}}
-    primary = {"lease_id": "primary", "token": "SECRET", "endpoint": {"path": "COM13"},
-               "evidence": {"device_before": {"device_id": "device-a", "boot_id": "old"}}}
-    auxiliary = {"lease_id": "auxiliary", "token": "SECRET2", "endpoint": {"path": "COM14"},
-                 "evidence": {"expected_device_id": "other" if failure == "wrong_owner" else None}}
+    manifest = {"version": "0.1", "images": {"recovery": {}}}
     status = {"device_id": "other" if failure == "wrong_device" else "device-a",
               "boot_id": "old" if failure == "old_boot" else "new", "firmware_mode": "recovery",
-              "app_version": "2.1.1-recovery"}
+              "app_version": "0.1", "capability_names": ["ota"]}
     identity = {"path": "COM14", "vid": 0x303A, "pid": 0x1001, "serial_number": "serial", "location": "1-2"}
     order = []
 
-    def acquire(*args, **kwargs):
-        order.append("primary")
-        return primary
-
-    def acquire_aux(*args, **kwargs):
-        order.append("auxiliary")
-        if failure == "lease_failure":
-            raise DeviceError("busy")
-        return auxiliary
-
     def target(*args, **kwargs):
         order.append(kwargs["target"])
-        if kwargs["target"] == "mosaico-recover-flash":
-            assert kwargs["port"] == "COM14"
-            assert "primary" in order and "auxiliary" in order
-            if failure == "flash":
-                raise OperationError("flash failed")
 
-    def finish(*args, **kwargs):
-        order.append((args[2]["lease_id"], kwargs["abort"]))
-        return {"state": "released", "evidence": {"verification": status}}
+    def execute(context, session, spec, **kwargs):
+        order.append("operation")
+        assert spec["device_id"] == "device-a"
+        assert spec["write_endpoint"] == "COM14"
+        assert spec["expected_version"] == "0.1"
+        assert spec["commands"] == [{"argv": ["test-flash"], "env": {"ESPPORT": "{port}"}}]
+        if failure in {"busy", "flash", "wrong_owner"}:
+            raise OperationError(failure)
+        return {"operation_id": "recovery-1", "evidence": {"verification": status}}
 
     patches = {
         "load_bundle": mock.Mock(return_value=manifest),
@@ -78,10 +65,8 @@ def _check_independent_recovery_holds_both_leases_and_verifies_original_device(t
         "serial_jtag_candidate": mock.Mock(side_effect=[identity, {**identity, "serial_number": "changed"} if failure == "changed_port" else identity]),
         "resolve_idf_path": mock.Mock(return_value=Path("/idf")),
         "run_idf_target": mock.Mock(side_effect=target),
-        "acquire_maintenance_lease": mock.Mock(side_effect=acquire),
-        "acquire_endpoint_maintenance_lease": mock.Mock(side_effect=acquire_aux),
-        "renew_maintenance_lease": mock.Mock(),
-        "finish_maintenance_lease": mock.Mock(side_effect=finish),
+        "idf_target_command": mock.Mock(return_value={"argv": ["test-flash"], "env": {"ESPPORT": "{port}"}}),
+        "run_host_operation": mock.Mock(side_effect=execute),
         "record_recovery_verification": mock.Mock(),
     }
     for name, replacement in patches.items():
@@ -90,27 +75,20 @@ def _check_independent_recovery_holds_both_leases_and_verifies_original_device(t
         result = commands.recover(arguments, context)
         assert result["status"] == "dry_run"
         assert order == []
-        patches["acquire_maintenance_lease"].assert_not_called()
+        patches["run_host_operation"].assert_not_called()
     elif failure:
         with unittest.TestCase().assertRaises((DeviceError, OperationError)):
             commands.recover(arguments, context)
         patches["record_recovery_verification"].assert_not_called()
-        if failure not in {"no_live", "wrong_device", "old_boot"}:
-            assert ("primary", True) in order
-        if failure not in {"no_live", "lease_failure"}:
-            assert ("auxiliary", True) in order
-        if failure in {"changed_port", "wrong_owner", "no_live", "lease_failure"}:
-            assert "mosaico-recover-flash" not in order
+        if failure in {"changed_port", "no_live"}:
+            assert "operation" not in order
     else:
         result = commands.recover(arguments, context)
         assert result["status"] == "succeeded"
         assert result["device_id"] == "device-a"
-        assert result["recovery_endpoint_lease_id"] == "auxiliary"
-        assert order == ["mosaico-recover-prepare", "primary", "auxiliary",
-                         "mosaico-recover-flash", ("primary", False), ("auxiliary", True)]
-        evidence = (tmp_path / "recovery-route.json").read_text()
-        assert "COM14" in evidence and "device-a" in evidence
-        assert "SECRET" not in evidence
+        assert result["operation_id"] == "recovery-1"
+        assert order == ["mosaico-recover-prepare", "operation"]
+        patches["record_recovery_verification"].assert_called_once_with("device-a", "0.1", "new")
 
 
 class RecoveryPortTests(unittest.TestCase):
@@ -159,9 +137,9 @@ def _recovery_test(failure):
     def check(self):
         with tempfile.TemporaryDirectory() as folder, ExitStack() as stack:
             patcher = SimpleNamespace(setattr=lambda obj, name, value: stack.enter_context(mock.patch.object(obj, name, value)))
-            _check_independent_recovery_holds_both_leases_and_verifies_original_device(Path(folder), patcher, failure)
+            _check_independent_recovery_holds_both_endpoints_and_verifies_original_device(Path(folder), patcher, failure)
     return check
 
 
-for _failure in [None, "dry_run", "no_live", "changed_port", "wrong_owner", "flash", "wrong_device", "old_boot", "lease_failure"]:
+for _failure in [None, "dry_run", "no_live", "changed_port", "wrong_owner", "flash", "wrong_device", "old_boot", "busy"]:
     setattr(RecoveryPortTests, "test_recovery_" + str(_failure or "success"), _recovery_test(_failure))

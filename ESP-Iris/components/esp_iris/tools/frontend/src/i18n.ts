@@ -3,6 +3,11 @@ import { useLayoutEffect } from "react";
 export type UiLanguage = "zh" | "en";
 
 const translations: Record<string, string> = {
+  "空闲": "Idle",
+  "忙碌": "Busy",
+  "连接中": "Connecting",
+  "需恢复": "Needs recovery",
+  "ROM 下载": "ROM download",
   "项目会话与设备归属": "Project session and device ownership",
   "项目": "Project",
   "操作完成": "Operation completed",

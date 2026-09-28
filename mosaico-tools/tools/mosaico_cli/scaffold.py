@@ -123,5 +123,5 @@ def initialize_project(
         "project": str(project),
         "template": str(template),
         "files": list(files),
-        "install_command": "python mosaico.py iris app-update --project " + shell_quote(project.relative_to(root).as_posix()),
+        "install_command": "python mosaico.py iris system-update --project " + shell_quote(project.relative_to(root).as_posix()),
     }

@@ -28,7 +28,7 @@ def test_bridge_worker_and_transaction_gates(tmp_path, kind):
         source = ROOT / "firmware/recovery/main/factory_recovery_control.c"
     includes = re.findall(r'#include "([^"]+)"', source.read_text())
     for name in includes + ["esp_err.h"]:
-        if name in {"iris_bridge.h", "cJSON.h", "factory_system_metadata.h", "factory_system_update.h", "esp_iris_system_update.h", "factory_ui.h", "factory_network.h", "factory_recovery_control.h"}:
+        if name in {"iris_bridge.h", "system_plan.h", "cJSON.h", "factory_system_metadata.h", "factory_system_update.h", "esp_iris_system_update.h", "factory_ui.h", "factory_network.h", "factory_recovery_control.h"}:
             continue
         header = tmp_path / name
         header.parent.mkdir(parents=True, exist_ok=True)
@@ -41,7 +41,9 @@ def test_bridge_worker_and_transaction_gates(tmp_path, kind):
                "-I" + str(tmp_path), "-I" + str(FIXTURE), "-I" + str(headers[0].parent),
                "-I" + str(ROOT / "include"), "-I" + str(BRIDGE / "include"), "-I" + str(ROOT / "firmware/recovery/main"),
                "-I" + str(REPO / "ESP-Iris/components/esp_iris/include"),
-               str(FIXTURE / ("main.c" if kind == "worker" else kind + ".c")), str(cjson_source), "-lcrypto", "-o", str(executable)]
+               str(FIXTURE / ("main.c" if kind == "worker" else kind + ".c")), str(cjson_source), "-lcrypto", "-pthread", "-o", str(executable)]
+    if kind == "worker":
+        command.append(str(BRIDGE / "system_plan.c"))
     if backend:
         command.append("-DBACKEND_TEST")
     if os.environ.get("IRIS_HOST_SANITIZERS") == "1":

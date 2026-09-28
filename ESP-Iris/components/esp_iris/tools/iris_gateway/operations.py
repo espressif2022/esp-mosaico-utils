@@ -7,6 +7,7 @@ import time
 import uuid
 from collections import defaultdict
 from collections.abc import Awaitable, Callable
+from contextlib import AsyncExitStack
 from typing import Any
 
 from .observability import MetricsRegistry
@@ -32,8 +33,8 @@ class OperationOutcomeUnknown(RuntimeError):
     pass
 
 
-class DeviceMaintenance(RuntimeError):
-    """Raised when a device is reserved for host-side maintenance."""
+class DeviceBusy(RuntimeError):
+    """An exclusive operation currently controls this device or endpoint."""
 
 
 @dataclasses.dataclass
@@ -72,8 +73,7 @@ class OperationManager:
         self._pending: dict[str, _Pending] = {}
         self._tasks: set[asyncio.Task[Any]] = set()
         self._submission_ids: set[str] = set()
-        self._maintenance_pending: set[str] = set()
-        self._maintenance_active: set[str] = set()
+        self._exclusive: dict[str, str] = {}
         self.metrics = metrics or MetricsRegistry()
 
     @staticmethod
@@ -82,40 +82,6 @@ class OperationManager:
             "device_id": device_id, "actor_type": actor.kind, "actor_name": actor.name,
             "actor_scopes": sorted(actor.scopes), "action": action, "params": params,
         })
-
-    def maintenance_state(self, device_id: str) -> str | None:
-        if device_id in self._maintenance_active:
-            return "active"
-        if device_id in self._maintenance_pending:
-            return "pending"
-        return None
-
-    async def acquire_maintenance(self, device_id: str, timeout: float) -> None:
-        """Drain earlier work and atomically block later work for one device."""
-
-        if self.maintenance_state(device_id) is not None:
-            raise DeviceMaintenance(f"device {device_id} already has maintenance pending")
-        self._maintenance_pending.add(device_id)
-        lock = self._locks[device_id]
-        try:
-            await asyncio.wait_for(lock.acquire(), timeout=max(0.1, timeout))
-        except BaseException:
-            self._maintenance_pending.discard(device_id)
-            raise
-        self._maintenance_pending.discard(device_id)
-        self._maintenance_active.add(device_id)
-
-    def restore_maintenance(self, device_id: str) -> None:
-        """Restore the gate after a Gateway restart without opening the endpoint."""
-
-        self._maintenance_active.add(device_id)
-
-    def release_maintenance(self, device_id: str) -> None:
-        self._maintenance_pending.discard(device_id)
-        self._maintenance_active.discard(device_id)
-        lock = self._locks.get(device_id)
-        if lock is not None and lock.locked():
-            lock.release()
 
     def _transition(
         self, operation_id: str, status: str, **changes: Any
@@ -141,11 +107,10 @@ class OperationManager:
         items = [
             item
             for item in self._pending.values()
-            if item.device_id == device_id
+            if item.device_id == device_id or self._exclusive.get(device_id) == item.operation_id
         ]
         return {
             "device_id": device_id,
-            "maintenance": self.maintenance_state(device_id),
             "running": [item.operation_id for item in items if item.running],
             "queued": [
                 item.operation_id
@@ -211,13 +176,12 @@ class OperationManager:
         operation_id: str | None = None,
         serialized: bool = True,
         result_summary: Callable[[Any], Any] | None = None,
+        exclusive_resources: tuple[str, ...] = (),
     ) -> tuple[dict[str, Any], bool]:
         """Queue an operation and return immediately while it runs in background."""
 
-        if self.maintenance_state(device_id) is not None:
-            raise DeviceMaintenance(
-                f"device {device_id} is reserved for host-side maintenance"
-            )
+        if device_id in self._exclusive and self._exclusive[device_id] != operation_id:
+            raise DeviceBusy(f"device {device_id} has exclusive operation {self._exclusive[device_id]}")
         operation_id = operation_id or str(uuid.uuid4())
         fingerprint = self._fingerprint(device_id, actor, action, params)
         existing = self.store.operation(operation_id)
@@ -243,6 +207,7 @@ class OperationManager:
                 operation_id=operation_id,
                 serialized=serialized,
                 result_summary=result_summary,
+                exclusive_resources=exclusive_resources,
             ),
             name=f"esp-iris-operation-{operation_id}",
         )
@@ -268,16 +233,19 @@ class OperationManager:
             return operation, created
         return operation, True
 
-    async def cancel_queued(self) -> int:
+    async def cancel_queued(self, device_id: str | None = None, *,
+                            reason: str = "cancelled when gateway entered observe mode") -> int:
         count = 0
         for pending in tuple(self._pending.values()):
+            if device_id is not None and pending.device_id != device_id and self._exclusive.get(device_id) != pending.operation_id:
+                continue
             if not pending.running and not pending.cancelled:
                 pending.cancelled = True
                 count += 1
                 operation = self._transition(
                     pending.operation_id,
                     "cancelled",
-                    error="cancelled when gateway entered observe mode",
+                    error=reason,
                     finished_ns=time.time_ns(),
                 )
                 await self._emit(operation)
@@ -301,17 +269,20 @@ class OperationManager:
         operation_id: str | None = None,
         serialized: bool = True,
         result_summary: Callable[[Any], Any] | None = None,
+        exclusive_resources: tuple[str, ...] = (),
     ) -> tuple[dict[str, Any], Any, bool]:
-        if self.maintenance_state(device_id) is not None:
-            raise DeviceMaintenance(
-                f"device {device_id} is reserved for host-side maintenance"
-            )
+        if device_id in self._exclusive and self._exclusive[device_id] != operation_id:
+            raise DeviceBusy(f"device {device_id} has exclusive operation {self._exclusive[device_id]}")
         operation_id = operation_id or str(uuid.uuid4())
         queue_position = sum(
             1
             for item in self._pending.values()
-            if item.device_id == device_id and not item.cancelled
+            if (item.device_id == device_id or self._exclusive.get(device_id) == item.operation_id) and not item.cancelled
         )
+        resources = tuple(sorted({device_id, *exclusive_resources}))
+        if exclusive_resources and any(key in self._exclusive and self._exclusive[key] != operation_id
+                                       for key in resources):
+            raise DeviceBusy("another exclusive operation owns a requested resource")
         operation, created = self.store.create_operation(
             {
                 "operation_id": operation_id,
@@ -329,11 +300,15 @@ class OperationManager:
         if not created:
             return operation, operation.get("result"), False
         pending = _Pending(operation_id, device_id)
+        if exclusive_resources:
+            self._exclusive.update({key: operation_id for key in resources})
         self._pending[operation_id] = pending
-        await self._emit(operation)
         try:
+            await self._emit(operation)
             if serialized:
-                async with self._locks[device_id]:
+                async with AsyncExitStack() as locks:
+                    for key in resources:
+                        await locks.enter_async_context(self._locks[key])
                     if pending.cancelled:
                         raise OperationCancelled(
                             "operation cancelled before it reached the device"
@@ -348,6 +323,9 @@ class OperationManager:
             return completed, result, True
         finally:
             self._pending.pop(operation_id, None)
+            for key in resources:
+                if self._exclusive.get(key) == operation_id:
+                    del self._exclusive[key]
 
     async def _run(
         self,
@@ -371,7 +349,7 @@ class OperationManager:
             operation = self._transition(
                 pending.operation_id,
                 "outcome_unknown" if interrupted.get("action") in {
-                    "firmware.ota", "firmware.system_update", "device.restart", "rpc.raw"
+                    "firmware.ota", "firmware.system_update", "device.restart", "rpc.raw", "host.recovery"
                 } else "interrupted",
                 error="gateway task was interrupted; device writes were not replayed",
                 finished_ns=time.time_ns(),

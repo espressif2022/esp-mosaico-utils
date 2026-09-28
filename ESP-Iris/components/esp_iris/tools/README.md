@@ -151,17 +151,43 @@ Explicit `--usb` selection supports custom application VID/PID/product strings;
 automatic discovery retains its ESP-Iris descriptor filter. Every connection
 must complete the ESP-Iris handshake. Espressif `303A:1001` still requires the
 Serial/JTAG opt-in below, and `303A:0020` ROM download ports remain reserved for
-the maintenance workflow.
+local ROM operation executor.
 
-Restored maintenance leases do not require their devices to be present for the
-Gateway to start. Saved physical locations are locked immediately; serial-only
-records wait for an unambiguous live match. A legacy record with insufficient
-identity stays `maintenance_unresolved`, and USB acquisitions that cannot be
-ruled out as conflicting are quarantined across Gateway processes. The API
-remains available to inspect the reservation or abort it with its original
-maintenance token. An unsuccessful completion before reattachment retains the
-quarantine and remains cancellable. Instances sharing these reservations must
-all run the updated ownership implementation.
+### Device state and local ROM operations
+
+Device and endpoint inventories expose one `state`: `offline`, `connecting`,
+`idle`, `busy`, or `needs_recovery`. `owner_session_id` and `firmware_mode`
+(`normal`, `recovery`, `rom`, `unknown`) are independent fields. `busy_reasons`
+identifies active operations, jobs and mirrors. Log viewers and client leases
+alone do not make a device busy. An active operation remains busy across its
+expected USB disconnect/re-enumeration; only live ROM descriptors justify a
+`needs_recovery` diagnosis, not an HTTP timeout or a failed operation record.
+
+Host-side ROM probes and Recovery installation use the ordinary operation
+queue/history (`host.probe`, `host.recovery`). The local CLI publishes a private,
+one-use request file and submits its ID to `POST /v1/host-operations`. Executable
+commands and environment values are never accepted in the HTTP body or saved
+in public operation parameters. Browser-origin and remote submissions are
+rejected. Results are read through the existing operation status endpoint.
+
+The operation blocks new work on all involved device/endpoint resources,
+preserves available crash evidence, detaches the Iris connection, and starts a
+separate worker. That worker owns the physical USB locks for the entire
+foreground command lifetime. Closing the CLI or losing the Gateway does not
+kill the writer or release its locks. A CLI wait timeout reports the operation
+ID; it does not interrupt flash. Commands must wait for all their writers to
+exit, rather than launching detached background work.
+
+After writing, the Gateway reattaches and verifies the selected device, a new
+Boot ID, Recovery mode, expected version/MAC and OTA capability. A failed write
+or verification stays in operation history. Completed processes leave no
+renewable reservation or token requiring manual cleanup. On Gateway restart,
+interrupted writes are recorded as `outcome_unknown`, never replayed; still-live
+workers remain visible as busy and keep their process-owned physical locks.
+
+The former maintenance lease API, CLI commands and persisted lease table are
+removed. All participating host tools must use this implementation; mixed
+versions and resuming old lease workflows are not supported.
 
 Application CDC0 carries framed ESP-Iris data, not a text console. Flash and
 monitor through a separate UART/Serial-JTAG interface or manually enter the ROM
@@ -273,8 +299,8 @@ python "$IRIS" ctl firmware-add build/app.bin
 python "$IRIS" ctl ota DEVICE_ID build/app.bin
 python "$IRIS" ctl ota DEVICE_ID build/app.bin --validation-mode version
 python "$IRIS" ctl system-update DEVICE_ID release.irisfw --wait
-python "$IRIS" ctl ota-status OPERATION_ID
-python "$IRIS" ctl ota-watch OPERATION_ID
+python "$IRIS" ctl operation-status OPERATION_ID
+python "$IRIS" ctl operation-watch OPERATION_ID
 python "$IRIS" ctl mode observe
 ```
 
@@ -441,3 +467,36 @@ API owns state layout and schema checks. Consumer products must not import
 `link`, `ownership` or `store` internals. See
 [component boundaries](../../../../docs/component-boundaries.md) for compatibility,
 source fingerprints, shared lifecycle and product Recovery preconditions.
+
+### Receiver-initiated device handoff
+
+`POST /v1/project/takeovers` runs on the receiving project Gateway. Select exactly
+one `device_id` or `endpoint`; optionally pass a UUID `takeover_id`, `force` and
+`timeout` (default 120 seconds, maximum 3600). It resolves the current live local
+owner and asks that owner to use the existing reserved transfer and validated
+acceptance protocol. An unowned device uses `/v1/project/acquire` instead.
+
+Without force, a busy device returns its operation, mirror and Job reasons.
+With force, the owner closes admission only for this device, cancels queued work,
+lets executing writes finish, stops all mirror channels and waits for cooperative
+Job cancellation. Browser log streams and client keepalives do not block handoff.
+A drain timeout retains ownership and reopens admission; already stopped work is
+not restarted, and a writer is never killed. Transfers use per-device control
+locks, so unrelated devices can continue and receivers can accept incoming work
+while coordinating an outbound request. Peer failures preserve the takeover ID;
+query its durable state before retrying with the same ID.
+
+The public record routes are `GET /v1/project/takeovers/{takeover_id}` and
+`POST /v1/project/takeovers/{takeover_id}/{resume|abort|reconcile}`. Responses
+contain a `takeover` record with `takeover_id`. Resume runs in the original
+receiver, abort in the original owner; completed takeovers cannot be rolled back.
+Reconcile requires both original sessions to have exited and a participant
+project to prove all physical locks are free.
+
+The receiving request retains its Gateway until validation finishes. It calls
+`/v1/project/handoff/prepare` on the owner, which validates the receiver and its
+pairing setup before releasing any endpoint. The receiver then validates the
+reserved identity locally. This peer endpoint is an implementation detail;
+there is no owner-initiated public transfer API, callback accept API or legacy
+route alias. The durable registry transaction still uses the internal transfer
+schema and retains reservations across interrupted HTTP requests.

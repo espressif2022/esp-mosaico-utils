@@ -32,6 +32,7 @@ class WorkspaceConfig:
     devices: tuple[dict[str, Any], ...]
     init_template: Path | None = None
     gateway_source_policy: str = "compatible"
+    raylib_path: Path | None = None
 
     def resolve(self, value: str) -> Path:
         path = Path(value).expanduser()
@@ -188,6 +189,7 @@ def load_workspace(
         build_runner=build_runner,
         devices=tuple(dict(item) for item in devices_value),
         gateway_source_policy=source_policy,
+        raylib_path=workspace_path(dependencies.get("raylib", "submodule/raylib-lite-engine"), "dependencies.raylib"),
         init_template=(
             workspace_path(workspace["init_template"], "workspace.init_template")
             if "init_template" in workspace else None

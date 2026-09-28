@@ -61,6 +61,13 @@ class MosaicoArgumentParser(argparse.ArgumentParser):
         super().error(message)
 
 
+def uuid_argument(value: str) -> str:
+    try:
+        return str(uuid.UUID(value))
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("takeover ID must be a UUID") from error
+
+
 def positive_timeout(value: str) -> float:
     try:
         result = float(value)
@@ -136,12 +143,6 @@ def _canonical_argv(argv: Sequence[str]) -> list[str]:
             result[index] = "iris"
         elif token == "device":
             result[index] = "iris"
-            if index + 1 < len(result):
-                action = result[index + 1]
-                if action == "transfer":
-                    result[index + 1:index + 2] = ["transfer", "start"]
-                elif action.startswith("transfer-"):
-                    result[index + 1:index + 2] = ["transfer", action[len("transfer-"):]]
         break
     return result
 
@@ -166,6 +167,28 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="group", required=True)
     project_parser = commands.add_parser("project", help="Create application projects")
     project_commands = project_parser.add_subparsers(dest="project_action", required=True)
+    from .app_commands import add_commands
+    add_commands(commands, project_commands)
+
+    upload_parser = project_commands.add_parser("upload", help="Upload an unsigned Iris application/version as a Mosaico Ideas draft")
+    upload_parser.set_defaults(command="project-upload")
+    upload_parser.add_argument("--project", help="Application directory with mosaico-ideas.json")
+    upload_parser.add_argument("--skip-build", action="store_true")
+    upload_parser.add_argument("--bundle", help="Existing .irisfw bundle; no build is performed")
+    upload_parser.add_argument("--version", dest="release_version", help="Exact release version; must match other version sources")
+    upload_target = upload_parser.add_mutually_exclusive_group()
+    upload_target.add_argument("--create", action="store_true")
+    upload_target.add_argument("--update", metavar="APPLICATION_ID")
+    upload_parser.add_argument("--yes", action="store_true", help="Confirm creation/update and replacement of any existing draft")
+    upload_parser.add_argument("--server", help="Mosaico Ideas HTTPS origin (or MAKER_SPARK_SERVER)")
+    account_parser = commands.add_parser("account", help="Manage browser-approved Mosaico Ideas login")
+    account_commands = account_parser.add_subparsers(dest="account_action", required=True)
+    for account_action in ("login", "status", "logout"):
+        account_child = account_commands.add_parser(account_action)
+        account_child.set_defaults(command="account")
+        account_child.add_argument("--server", help="Mosaico Ideas HTTPS origin (or MAKER_SPARK_SERVER)")
+        if account_action == "login":
+            account_child.add_argument("--open-browser", action="store_true", help="Open the verification page in the system browser")
     iris_parser = commands.add_parser("iris", help="Project Gateway and ESP-Iris device operations")
     iris_commands = iris_parser.add_subparsers(dest="iris_action", required=True)
     test_parser = iris_commands.add_parser("test", help="Test Recovery transitions, Wi-Fi and Bridge pairing")
@@ -462,46 +485,41 @@ def build_parser() -> argparse.ArgumentParser:
     status_parser.set_defaults(command="session", session_action="status", public_command="iris status")
     status_parser.add_argument("--all", dest="all_projects", action="store_true",
                                help="Passively list same-user Gateways, clients and device ownership across workspaces")
-    transfer_parser = iris_commands.add_parser("transfer", help="Transfer device ownership between project sessions")
-    transfer_actions = transfer_parser.add_subparsers(dest="transfer_action", required=True)
+    takeover_parser = iris_commands.add_parser("takeover", help="Take a device into this project or recover an interrupted handoff")
+    takeover_actions = takeover_parser.add_subparsers(dest="takeover_action", required=True)
     device_parsers = []
-    for action in ("claim", "release", "reconcile", "transfer", "transfer-status", "transfer-abort", "transfer-accept", "transfer-reconcile"):
-        if action.startswith("transfer"):
-            verb = "start" if action == "transfer" else action[len("transfer-"):]
-            path = ("iris", "transfer", verb)
-            parent = transfer_actions
-            help_text = {
-                "start": "Transfer an idle device to another running project session",
-                "status": "Inspect an existing ownership transfer",
-                "accept": "Accept an offered ownership transfer",
-                "abort": "Abort a pending ownership transfer",
-                "reconcile": "Reconcile a transfer after its original sessions have stopped",
-            }[verb]
-        else:
-            path = ("iris", action)
-            parent = iris_commands
-            help_text = {
-                "claim": "Claim the selected or sole available device for this project's Gateway",
-                "release": "Release an idle device or endpoint; defaults to the sole owned device",
-                "reconcile": "Clear ordinary ownership left by a stopped session",
-            }[action]
-        action_parser = parent.add_parser(path[-1], help=help_text)
+    actions = {
+        "claim": "Claim the selected or sole available device for this project's Gateway",
+        "release": "Release an idle device or endpoint; defaults to the sole owned device",
+        "reconcile": "Clear ordinary ownership left by a stopped session",
+        "takeover-start": "Request a device from its current Gateway into this project",
+        "takeover-status": "Inspect an existing device takeover without starting a Gateway",
+        "takeover-resume": "Continue identity validation in the receiving project",
+        "takeover-abort": "Roll back an incomplete takeover from its original owning project",
+        "takeover-reconcile": "Resolve ownership after both original sessions have stopped",
+    }
+    for action, help_text in actions.items():
+        is_takeover = action.startswith("takeover-")
+        verb = action[len("takeover-"):] if is_takeover else action
+        path = ("iris", "takeover", verb) if is_takeover else ("iris", verb)
+        action_parser = (takeover_actions if is_takeover else iris_commands).add_parser(verb, help=help_text)
         action_parser.set_defaults(command="device", device_action=action, public_command=" ".join(path))
         device_parsers.append(action_parser)
-        if action == "transfer":
-            action_parser.add_argument("--device-id", help="Device to transfer; defaults to the sole owned device")
-        elif action == "claim":
+        if action == "claim":
             action_parser.add_argument("--device-id")
             action_parser.add_argument("--endpoint")
-        elif action in {"release", "reconcile"}:
-            selection = action_parser.add_mutually_exclusive_group(required=action == "reconcile")
+        elif action in {"takeover-start", "release", "reconcile"}:
+            selection = action_parser.add_mutually_exclusive_group(required=action != "release")
             selection.add_argument("--device-id")
             selection.add_argument("--endpoint")
-        if action == "transfer":
-            action_parser.add_argument("--to-session", required=True)
-            action_parser.add_argument("--transfer-id", help="Reuse this ID when retrying a transfer")
-        elif action.startswith("transfer-"):
-            action_parser.add_argument("--transfer-id", required=True)
+        if action == "takeover-start":
+            action_parser.add_argument("--force", action="store_true", help="Stop mirrors and jobs; wait safely for active writes")
+            action_parser.add_argument("--timeout", type=float, default=120, help="Maximum seconds to drain active work (default: 120)")
+        if is_takeover:
+            action_parser.add_argument("--takeover-id", type=uuid_argument, required=action != "takeover-start",
+                                       help="Takeover record ID; reuse this ID after a lost response")
+        if action in {"claim", "takeover-start", "takeover-resume"}:
+            action_parser.add_argument("--pairing-token-file", type=Path, help="Private TCP pairing token file")
     run_parser.add_argument("--device-id")
     run_parser.add_argument("--endpoint")
     run_parser.add_argument("--pairing-token-file", type=Path, help="Private file containing the TCP pairing token")
@@ -511,8 +529,6 @@ def build_parser() -> argparse.ArgumentParser:
         if "--project" not in child._option_string_actions:
             child.add_argument("--project", help="Project whose development session to use")
         if child in device_parsers:
-            if child.prog.endswith(" claim"):
-                child.add_argument("--pairing-token-file", type=Path, help="Private TCP pairing token file")
             continue
         if child is not recover_parser and "--device-id" in child._option_string_actions and "--endpoint" not in child._option_string_actions:
             child.add_argument("--endpoint", help="Explicit discovered endpoint for first identity handshake")
@@ -527,7 +543,8 @@ def _normalize_globals(argv: Sequence[str]) -> list[str]:
     index = 0
     while index < len(argv):
         value = argv[index]
-        if value in {"--json", "--verbose", "--version"}:
+        upload_version_flag = value == "--version" and "project" in argv[:index] and "upload" in argv[:index]
+        if value in {"--json", "--verbose", "--version"} and not upload_version_flag:
             globals_found.append(value)
         elif value == "--workspace":
             globals_found.append(value)
@@ -650,6 +667,18 @@ def _main(
         else:
             print(f"mosaico: {message}", file=sys.stderr)
         return 3
+    if arguments.command == "account":
+        from .platform_account import account
+        try:
+            result = account(arguments)
+        except MosaicoError as error:
+            _emit_error(error, arguments.json, arguments.verbose)
+            return error.exit_code
+        if arguments.json:
+            print(json.dumps({"ok": True, **result}, ensure_ascii=False, sort_keys=True))
+        else:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
     try:
         workspace = load_workspace(
             (tool_root or TOOL_ROOT).resolve(), explicit=arguments.workspace
@@ -657,6 +686,28 @@ def _main(
     except MosaicoError as error:
         _emit_error(error, arguments.json, arguments.verbose)
         return error.exit_code
+
+    if arguments.command in {"game", "sim"}:
+        from .app_commands import run
+        try:
+            return run(arguments, workspace)
+        except MosaicoError as error:
+            _emit_error(error, arguments.json, arguments.verbose)
+            return error.exit_code
+
+    if arguments.command == "project-upload":
+        from .platform_upload import project_upload
+        try:
+            result = project_upload(arguments, RunContext(workspace, arguments.command, arguments.verbose, arguments.json))
+        except MosaicoError as error:
+            _emit_error(error, arguments.json, arguments.verbose)
+            return error.exit_code
+        if arguments.json:
+            print(json.dumps({"ok": True, **result}, ensure_ascii=False, sort_keys=True))
+        else:
+            print("Draft saved: {} ({})".format(result["application_id"], result["version"]))
+            print("Draft URL: " + result["draft_url"])
+        return 0
 
     if arguments.command in {"session", "device"}:
         try:
@@ -800,7 +851,7 @@ def _project_command(arguments: Any, context: RunContext) -> int:
         else:
             print_status(result)
         return 0
-    start = arguments.command == "session" or getattr(arguments, "device_action", None) != "transfer-status"
+    start = arguments.command == "session" or getattr(arguments, "device_action", None) != "takeover-status"
     session = ensure_gateway(context, None, start=start)
     url = session.connection_args[1]
     if arguments.command == "session":
@@ -848,23 +899,27 @@ def _project_command(arguments: Any, context: RunContext) -> int:
         })
     elif action == "reconcile":
         result = request(url, "/v1/project/reconcile", {"device_id": arguments.device_id, "endpoint": arguments.endpoint})
-    elif action == "transfer":
-        transfer_id = arguments.transfer_id or str(uuid.uuid4())
-        context.status(f"transfer: {transfer_id}")
+    elif action == "takeover-start":
+        import math
+
+        if not math.isfinite(arguments.timeout) or not 0 < arguments.timeout <= 3600:
+            raise SelectionError("--timeout must be between zero and 3600 seconds")
+        takeover_id = arguments.takeover_id or str(uuid.uuid4())
+        context.status(f"takeover: {takeover_id}")
         try:
-            result = request(url, "/v1/project/transfer", {
-                "device_id": arguments.device_id, "target_session_id": arguments.to_session,
-                "transfer_id": transfer_id, "auto": not arguments.device_id,
-            }, timeout=40)
+            result = request(url, "/v1/project/takeovers", {
+                "device_id": arguments.device_id, "endpoint": arguments.endpoint,
+                "takeover_id": takeover_id, "force": arguments.force, "timeout": arguments.timeout,
+            }, timeout=arguments.timeout + 45)
         except DeviceError as error:
-            error.details["transfer_id"] = transfer_id
-            error.details["hint"] = "Query 'iris transfer status'; retry 'iris transfer accept' on the target. No automatic rollback occurred."
+            error.details["takeover_id"] = takeover_id
+            error.details["hint"] = "Query 'iris takeover status' before retrying with the same ID or using 'iris takeover resume'."
             raise
-    elif action == "transfer-status":
-        result = request(url, "/v1/project/transfers/" + arguments.transfer_id)
+    elif action == "takeover-status":
+        result = request(url, "/v1/project/takeovers/" + arguments.takeover_id)
     else:
-        verb = {"transfer-abort": "abort", "transfer-accept": "accept", "transfer-reconcile": "reconcile-transfer"}[action]
-        result = request(url, "/v1/project/" + verb, {"transfer_id": arguments.transfer_id}, timeout=35)
+        verb = {"takeover-abort": "abort", "takeover-resume": "resume", "takeover-reconcile": "reconcile"}[action]
+        result = request(url, f"/v1/project/takeovers/{arguments.takeover_id}/{verb}", {}, timeout=35)
     print(json.dumps(result, ensure_ascii=False, indent=None if arguments.json else 2))
     return 0
 

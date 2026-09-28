@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mosaico Ideas 项目上传"
+  short_description: "准备应用元数据、检查 Iris 固件包，并创建或更新 Mosaico Ideas 草稿"
+  default_prompt: "使用 $mosaico-ideas-upload 检查当前应用，准备元数据与 Iris 固件包，并按我确认的目标创建或更新 Mosaico Ideas 草稿。"

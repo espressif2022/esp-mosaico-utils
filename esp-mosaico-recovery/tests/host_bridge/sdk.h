@@ -4,12 +4,20 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 typedef int esp_err_t;
 #define ESP_OK 0
+#define EXT_RAM_BSS_ATTR
+typedef int wifi_ps_type_t;
+#define WIFI_PS_NONE 0
+#define WIFI_PS_MIN_MODEM 1
+extern wifi_ps_type_t mock_wifi_ps;
+static inline esp_err_t esp_wifi_get_ps(wifi_ps_type_t *out) { *out = mock_wifi_ps; return ESP_OK; }
+static inline esp_err_t esp_wifi_set_ps(wifi_ps_type_t mode) { mock_wifi_ps = mode; return ESP_OK; }
 #define ESP_FAIL -1
 #define ESP_ERR_INVALID_ARG 1
 #define ESP_ERR_INVALID_STATE 2
@@ -95,17 +103,19 @@ typedef struct {
 typedef struct {
     int event_id;
     const char *header_key, *header_value;
+    void *user_data;
 } esp_http_client_event_t;
 typedef struct {
     const char *url;
     esp_err_t (*event_handler)(esp_http_client_event_t *);
     int timeout_ms;
+    void *user_data;
     bool disable_auto_redirect;
     void *crt_bundle_attach;
     int buffer_size;
 } esp_http_client_config_t;
 typedef struct mock_http *esp_http_client_handle_t;
-extern int64_t mock_time;
+extern _Atomic int64_t mock_time;
 extern bool mock_network, mock_stop_on_delay;
 extern int mock_create_fail, mock_alloc_fail, mock_commit_error, mock_writes,
     mock_commits, mock_reserved, mock_abort;
@@ -200,7 +210,7 @@ static inline const char *esp_get_idf_version(void)
 }
 static inline const esp_app_desc_t *esp_app_get_description(void)
 {
-    static esp_app_desc_t app = {.version = "0.1"};
+    static esp_app_desc_t app = {.version = "0.1.2"};
     return &app;
 }
 static inline const esp_partition_t *esp_ota_get_running_partition(void)
@@ -234,20 +244,22 @@ static inline void *heap_caps_malloc(size_t size, int caps)
     (void)caps;
     return mock_alloc_fail ? NULL : malloc(size);
 }
+#ifdef BACKEND_TEST
 static inline int xTaskCreate(void (*fn)(void *), const char *name, int stack,
                               void *arg, int pri, TaskHandle_t *task)
 {
-    (void)name;
-    (void)stack;
-    (void)arg;
-    (void)pri;
-    if (mock_create_fail)
-        return 0;
+    (void)name; (void)stack; (void)arg; (void)pri;
+    if (mock_create_fail) return 0;
     mock_worker = fn;
-    if (task)
-        *task = (void *)1;
+    if (task) *task = (void *)1;
     return pdPASS;
 }
+#else
+int xTaskCreate(void (*fn)(void *), const char *name, int stack,
+                void *arg, int pri, TaskHandle_t *task);
+#endif
+#define ESP_LOGW(...) ((void)0)
+#define ESP_LOGI(...) ((void)0)
 void vTaskDelay(unsigned ms);
 void vTaskDelete(void *task);
 void esp_restart(void);
@@ -273,6 +285,9 @@ static inline int mbedtls_base64_encode(unsigned char *out, size_t cap, size_t *
 }
 #define esp_crt_bundle_attach NULL
 esp_http_client_handle_t esp_http_client_init(const esp_http_client_config_t *config);
+esp_err_t esp_http_client_set_url(esp_http_client_handle_t h, const char *url);
+esp_err_t esp_http_client_set_timeout_ms(esp_http_client_handle_t h, int timeout);
+esp_err_t esp_http_client_delete_header(esp_http_client_handle_t h, const char *name);
 esp_err_t esp_http_client_open(esp_http_client_handle_t h, size_t length);
 int esp_http_client_fetch_headers(esp_http_client_handle_t h);
 int esp_http_client_get_status_code(esp_http_client_handle_t h);
@@ -284,3 +299,13 @@ void esp_http_client_set_header(esp_http_client_handle_t h, const char *key,
 void esp_http_client_set_method(esp_http_client_handle_t h, int method);
 void esp_http_client_close(esp_http_client_handle_t h);
 void esp_http_client_cleanup(esp_http_client_handle_t h);
+
+bool esp_http_client_is_persistent_connection(esp_http_client_handle_t h);
+
+static inline int xTaskCreateWithCaps(void (*fn)(void *), const char *name, int stack,
+                                      void *arg, int pri, TaskHandle_t *task, unsigned caps)
+{
+    if (caps != (MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)) abort();
+    return xTaskCreate(fn, name, stack, arg, pri, task);
+}
+static inline void vTaskDeleteWithCaps(void *task) { vTaskDelete(task); }

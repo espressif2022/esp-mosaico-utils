@@ -28,7 +28,7 @@ class ClientLifecycle:
         client_id = str(body.get("client_id") or uuid.uuid4())
         uuid.UUID(client_id)
         kind = body.get("kind", "cli")
-        if kind not in {"cli", "run", "workbench", "transfer"}:
+        if kind not in {"cli", "run", "workbench"}:
             raise ValueError("unknown project client kind")
         command = body.get("command", kind)
         pid = body.get("pid")

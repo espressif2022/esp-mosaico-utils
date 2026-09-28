@@ -11,7 +11,11 @@
 - Do not recreate a nested ESP-Iris submodule. Both products resolve from the
   same `esp-mosaico-utils` revision.
 - Keep consuming applications and workspace-specific `.mosaico.json` files in
-  their application repositories, not here.
+  their application repositories. Reusable templates live in mosaico-tools/templates;
+  optional GSP application components in mosaico-tools/components; the normal
+  Recovery adapter and its CMake configuration gate live in esp-mosaico-recovery.
+- Run both mosaico-tools/tests and esp-mosaico-recovery/tests for public application
+  integration changes. These tests must not read consuming workspace internals.
 
 ## Versions
 

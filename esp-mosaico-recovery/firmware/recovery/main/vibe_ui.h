@@ -4,6 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "esp_gsp.h"
+#include "vibe_transfer.h"
 
 #define VIBE_AP_MAX 16
 #define VIBE_BUNDLE_MAX 8
@@ -42,6 +43,7 @@ typedef struct {
     uint32_t update_revision;
     bool updating, update_terminal, update_failed;
     unsigned progress; /* permille */
+    vibe_transfer_t transfer;
     char update_title[48], update_detail[160], update_owner[16], update_verified[24];
 } vibe_snapshot_t;
 typedef struct {
@@ -61,6 +63,7 @@ typedef struct {
     char selected_ssid[33], password_projection[65], password[65];
     vibe_bundle_t selected_bundle;
     uint32_t acknowledged_update;
+    vibe_rate_t rate;
     unsigned tick;
 } vibe_ui_t;
 

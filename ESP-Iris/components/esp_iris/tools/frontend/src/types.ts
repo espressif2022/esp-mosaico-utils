@@ -1,11 +1,16 @@
+export type DeviceState = "offline" | "connecting" | "idle" | "busy" | "needs_recovery";
+
 export type Device = {
+  state: DeviceState;
+  owner_session_id?: string | null;
+  busy_reasons?: { kind: string; operation_id?: string; job_id?: number; channel?: number }[];
   device_id: string;
   hardware_mac?: string;
   alias?: string;
   suggested_alias?: string;
   connected: boolean;
   cached?: boolean;
-  firmware_mode?: "normal" | "recovery";
+  firmware_mode?: "normal" | "recovery" | "rom" | "unknown";
   app_version?: string;
   project_name?: string;
   endpoint?: string;

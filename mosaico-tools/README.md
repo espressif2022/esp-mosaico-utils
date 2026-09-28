@@ -28,10 +28,9 @@ device, and reservations held by other sessions are never automatically reclaime
 without a device or when selection fails. Later device operations or `iris claim`
 can initiate a connection. It does not automatically re-claim a released device.
 In a shared session, `iris claim` can omit the target; `iris release` selects
-the sole owned device, even offline, and `iris transfer start` can omit
-`--device-id` while still requiring `--to-session`. Multiple verified transports
-of one owned device count as one. Transfer retries use the original record's
-identity. Reconcile commands and transfer record IDs remain explicit.
+the sole owned device, even offline. Multiple verified transports of one device
+count as one. `iris takeover start` requires an explicit device ID or endpoint.
+Use the original `--takeover-id` when retrying.
 
 `recover` also attempts automatic ESP-Iris admission before ROM detection;
 only an absent target allows the actual recovery to proceed to ROM selection.
@@ -39,14 +38,10 @@ An explicit `--hardware-mac` keeps the existing hardware identity workflow.
 External `--gateway-profile` commands only select devices already connected
 to that Gateway and never auto-acquire USB devices on the CLI host.
 
-Reboots retain the current ownership; a new project session does
-not inherit old connection history. `iris transfer start --device-id ...
---to-session ...` hands an idle device to a live receiving session. Interrupted
-transfers retain a queryable `transfer_id`; use `status`,
-`accept`, `abort`, or `reconcile` under `iris transfer` to
-resolve them explicitly. Shared same-user SQLite records and OS locks coordinate
-ownership without a global service. Legacy or remote Gateways do not participate.
-
+Reboots retain the current ownership; a new project session does not inherit old
+connection history. Device handoff is initiated only by the receiving project
+through `iris takeover start`. Shared same-user SQLite records and OS locks
+coordinate ownership without a global service.
 ## Command structure
 
 ```text
@@ -56,7 +51,7 @@ mosaico.py
 ├── iris
 │   ├── run / status
 │   ├── list / claim / release / reconcile
-│   ├── transfer start / status / accept / abort / reconcile
+│   ├── takeover start / status / resume / abort / reconcile
 │   ├── logs / memory / crash / rpc
 │   ├── app-update
 │   ├── system-update
@@ -72,11 +67,11 @@ or retains a client. An absent Gateway returns
 `{"running": false, "session": null}` with `--json`; orphaned ownership is
 reported separately. `--all` and `--project` are mutually exclusive.
 
-Ownership mutations (`iris claim/release/reconcile` and transfer actions) can
-start/join shared Gateways. Transfer status remains passive. A device claim is
+Ownership mutations (`iris claim/release/reconcile` and takeover actions) can
+start/join shared Gateways. Takeover status remains passive. A device claim is
 not a keepalive: use `iris run` when its ownership must persist across commands.
-Active transfers hold the receiver until validation completes. Interrupted
-transfer/maintenance reservations remain protected and require explicit
+Active takeover requests hold the receiver until validation completes. Interrupted
+takeover reservations remain protected and require explicit
 reconciliation; they are never silently released to another project.
 
 Older owner-pipe Gateways are listed with unavailable client details. New device
@@ -100,8 +95,8 @@ is unreachable. `iris test` groups individual Recovery test operations:
 Legacy command spellings remain accepted for existing scripts, but help and
 examples use the structure above. For example, `install` maps to
 `iris app-update`, `monitor` to `iris logs`, `init` to `project init`,
-`session run/status` to `iris run/status`, and `device transfer-*` to
-`iris transfer ...`. Existing operation identifiers and evidence formats remain
+`session run/status` to `iris run/status`. The `iris transfer` command group and
+its legacy aliases are removed without compatibility shims. Operation identifiers and evidence formats remain
 stable. `iris logs` follows by default (`--snapshot` prints retained logs only);
 `iris memory --follow` enables continuous memory sampling.
 
@@ -192,3 +187,144 @@ Both update paths require Gateway capability `update-acceptance/v1` and validate
 the final role and product contract after the healthy boot and image identity checks.
 Device ID selection can verify multiple candidates; an explicit endpoint is strict,
 and failed new probes release their endpoint/device reservations.
+
+### ROM Recovery operations
+
+`mosaico.py recover` prepares its bundle before submitting a single local Gateway
+operation for ROM flashing and Recovery verification. ROM identity probes use
+the same process-owned endpoint locks. The operation ID, raw executor output and
+verification evidence are retained; there are no maintenance leases or renewals.
+A wait timeout leaves the running writer protected. Inspect its operation ID
+before retrying. A completed failed operation does not retain a permanent device
+reservation. The CLI and Workbench expose offline, connecting, idle, busy and
+needs-recovery states independently of project ownership and firmware mode.
+
+To request an owned device from a newly started project Gateway:
+
+```sh
+python mosaico.py iris takeover start --project projects/my_app --endpoint /dev/ttyACM0
+python mosaico.py iris takeover start --project projects/my_app --device-id <DEVICE_ID> --force --timeout 120
+```
+
+The default requires an idle device. `--force` stops admission of new work and
+cancels queued operations, waits for active writes, then stops mirrors and
+cooperatively cancels background Jobs. Timeout keeps the original owner and does
+not kill writes. A log monitor or `iris run` client alone never blocks handoff.
+Keep the reported takeover ID when querying or retrying an interrupted request:
+
+```sh
+python mosaico.py iris takeover status --project projects/my_app --takeover-id <ID>
+python mosaico.py iris takeover resume --project projects/my_app --takeover-id <ID>
+```
+
+`resume` continues validation in the original receiving session. If no reservation
+was created, retry `start` with the original ID. `abort` runs in the original
+owning project; it never rolls back a completed takeover or reclaims an accepting
+live receiver. `reconcile` is available to a participant project only after both
+original sessions have exited and physical locks are free. All four record
+commands require `--takeover-id`; `status` never starts a Gateway.
+
+## Upload Iris applications to Mosaico Ideas
+
+`project upload` creates or updates an application draft. It never submits a
+review, withdraws pending review, publishes a version, connects a device or
+starts the local Gateway. The current platform accepts **unsigned `.irisfw`**
+for ESP32-S31 (chip ID 32), containing exactly one application plus optional
+data/partition-table components. Recovery/bootloader components and nonzero
+flags are rejected. The server validates the bundle against its administrator's
+current active Iris Header; applications do not select a Header.
+
+Keep `mosaico-ideas.json`, README, covers and resources in the application directory:
+
+```json
+{
+  "schema": "mosaico-ideas/project-upload/v1",
+  "project": {
+    "title": "Temperature sensor",
+    "categories": ["sensors"],
+    "boards": [],
+    "tags": ["iris", "sensor"],
+    "license": "MIT",
+    "external_links": []
+  },
+  "content": {
+    "readme": "README.md",
+    "covers": ["assets/cover.png"],
+    "resources": ["assets/wiring.png"],
+    "attachments": ["attachments/schematic.pdf"]
+  },
+  "release": {"changelog": "Improve reconnect behavior"}
+}
+```
+
+The machine-readable schema is [mosaico-ideas.schema.json](mosaico-ideas.schema.json).
+The unpublished pre-release manifest name and schema identifier have been replaced;
+use `mosaico-ideas.json` with `mosaico-ideas/project-upload/v1` for new and existing projects.
+No application ID, Header ID or credential belongs in the manifest or bundle.
+All file paths are application-relative; absolute paths, `..`, escaping symlinks
+and duplicate declared files are rejected. Link README resources using Markdown
+inline images/links or reference definitions; these files are discovered and
+uploaded automatically, then destinations are replaced with platform asset URLs.
+External HTTP(S) links and code blocks remain unchanged. `content.resources`
+entries must be referenced from README; use `attachments` for standalone files.
+Use `%20` or angle destinations for spaces and percent-encode parentheses in
+filenames. Raw HTML resource links are not rewritten.
+
+Limits: 9 covers, 20 attachments, 100 resource files/100 MiB total; images up to
+10 MiB each, other resources 20 MiB, and the Iris archive 32 MiB. README must be
+UTF-8, at most 100,000 characters and 400,000 bytes. The manifest is at most 64 KiB.
+
+```sh
+python mosaico.py account login --server https://ideas.example --open-browser
+python mosaico.py account status --server https://ideas.example
+python mosaico.py project upload --project projects/my_app --server https://ideas.example
+```
+
+Login displays a verification page and a separate user code. Approve the code
+in your browser; the CLI stores its token privately under
+`state_root("esp-mosaico")/mosaico-ideas/` (POSIX directory/file modes 0700/0600).
+Existing per-server private state is moved automatically from the previous brand's
+directory on first use; existing new-directory state takes precedence and is never
+overwritten. Credentials and resumable-upload records migrate together.
+Native Windows account directory permissions apply. `account logout` revokes
+the selected token. `MAKER_SPARK_TOKEN` takes precedence over saved credentials;
+logout with that environment variable revokes it, without deleting a different
+saved token. `MAKER_SPARK_SERVER` supplies the default server origin. HTTPS is
+required except for localhost development. Tokens never appear in JSON or run logs.
+These environment variable names are retained for compatibility with existing CI secrets.
+
+Interactive upload asks whether to create a new application or update an owned
+one, showing the complete application ID, version and status. It asks for
+confirmation again and warns when replacing an existing draft. An update is
+never inferred from directory names or previous selections. CI/`--json` usage
+requires `--create` or `--update APPLICATION_ID`, and `--yes` explicitly confirms
+the operation, including replacement of an existing draft:
+
+```sh
+# Inject MAKER_SPARK_TOKEN through the CI secret store, not a command argument.
+python mosaico.py project upload --project projects/my_app --create --yes --json --server https://ideas.example
+python mosaico.py project upload --project projects/my_app --skip-build --update APPLICATION_ID --yes --json --server https://ideas.example
+python mosaico.py project upload --project projects/my_app --bundle dist/app.irisfw --version 0.1.2 --update APPLICATION_ID --yes --json --server https://ideas.example
+```
+
+By default the CLI runs the existing `system-update-bundle` build target.
+`--skip-build` uses the existing build and its `project_description.json`;
+`--bundle` inspects the specified archive without a build. Local build version,
+bundle `release` and explicit `--version`, when present, must match exactly.
+A supplied bundle without `release` requires `--version`. Versions are at most
+80 characters, begin with a letter/digit, and use letters, digits, `.`, `_`, `+`
+and `-`; no normalization occurs (bundle release itself is limited to 64 characters).
+
+Success JSON includes `application_id`, `revision_id`, `version`, `bundle_sha256`,
+`status: "draft"` and `draft_url`. Retry the same command after a lost response:
+private resumable state preserves idempotency keys and completed assets. S3
+precondition failures are verified through completion; expired sessions are
+renewed. Local servers without S3 use the dedicated Iris multipart endpoint.
+Network errors report a platform request ID where available, without signed URLs.
+A version conflict requires refreshing the draft rather than overriding changes.
+
+Run upload-specific unit tests with:
+
+```sh
+python3 -m unittest discover -s mosaico-tools/tests -v
+```

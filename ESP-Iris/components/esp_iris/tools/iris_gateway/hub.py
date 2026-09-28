@@ -21,13 +21,7 @@ from .ownership import OwnershipRegistry
 from .protocol import ProtocolError, Transport
 from .session import DeviceSession
 from .system_update import SystemUpdateBundle
-from .usb_ownership import (
-    UsbEndpointBusy,
-    UsbQuarantine,
-    check_usb_quarantines,
-    reservation_selector,
-    usb_admission,
-)
+from .usb_ownership import UsbEndpointBusy, usb_admission
 
 LinkOpener = Callable[[], Awaitable[Link]]
 EventCallback = Callable[[Dict[str, Any]], Awaitable[None]]
@@ -134,9 +128,8 @@ class IrisHub:
         self._locks: dict[str, EndpointLock] = {}
         self._endpoint_states: dict[str, dict[str, Any]] = {}
         self._endpoint_configs: dict[str, tuple[LinkOpener, str | None]] = {}
-        self._maintenance_endpoints: set[str] = set()
+        self._host_endpoints: set[str] = set()
         self._pending_usb: dict[str, dict[str, Any]] = {}
-        self._usb_quarantines: dict[str, UsbQuarantine] = {}
         self._usb_retry_task: asyncio.Task[None] | None = None
         self._discovery_task: asyncio.Task[None] | None = None
         self._mdns_discovery: IrisMdnsDiscovery | None = None
@@ -210,12 +203,11 @@ class IrisHub:
         usb_serial_jtag = usb_serial_jtag or prior.get("usb_serial_jtag", False)
         self._endpoint_states.pop(pending, None)
         endpoint = usb_endpoint(resolved)
-        # Restored leases retain their durable endpoint name, while all aliases
-        # still share the same physical lock and supervisor.
+        # All aliases share the same physical lock and supervisor.
         endpoint = next((key for key, state in self._endpoint_states.items()
                          if state.get("lock_endpoint") == endpoint), endpoint)
         previous = self._endpoint_states.get(endpoint, {})
-        if discovered and endpoint in self._maintenance_endpoints:
+        if discovered and endpoint in self._host_endpoints:
             return
         resolved["usb_selection"] = (
             "explicit" if not discovered else previous.get("usb_selection", "discovery")
@@ -252,22 +244,14 @@ class IrisHub:
 
     async def _retry_usb(self) -> None:
         delay = max(0.01, self.reconnect_min_seconds)
-        while self._pending_usb or self._usb_quarantines:
-            # Resolve quarantines before discovery or explicit selectors can
-            # acquire a newly enumerated endpoint.
-            for endpoint in list(self._usb_quarantines):
-                self._resolve_usb_reservation(endpoint)
+        while self._pending_usb:
             for options in list(self._pending_usb.values()):
                 await self.add_usb(**options)
             await asyncio.sleep(delay)
             delay = min(self.reconnect_max_seconds, max(delay * 2, 0.01))
 
     def _claim_usb(self, endpoint: str, metadata: dict[str, Any]) -> None:
-        quarantine = self._usb_quarantines.get(endpoint)
-        with usb_admission() as root:
-            check_usb_quarantines(
-                root, metadata, ignore=quarantine.id if quarantine else None
-            )
+        with usb_admission():
             if endpoint not in self._locks:
                 lock = EndpointLock(usb_endpoint(metadata))
                 try:
@@ -350,11 +334,8 @@ class IrisHub:
         state.update(metadata or {})
         if endpoint in self._endpoint_tasks:
             return
-        if endpoint in self._maintenance_endpoints:
-            state["state"] = (
-                "maintenance_unresolved" if endpoint in self._usb_quarantines
-                else "maintenance_detached"
-            )
+        if endpoint in self._host_endpoints:
+            state["state"] = "host_operation"
             state["updated_monotonic_ns"] = time.monotonic_ns()
             return
         if endpoint not in self._locks and not defer_lock:
@@ -515,19 +496,10 @@ class IrisHub:
             lock.close()
         self._endpoint_states.pop(endpoint, None)
         self._endpoint_configs.pop(endpoint, None)
-        self._maintenance_endpoints.discard(endpoint)
+        self._host_endpoints.discard(endpoint)
         self._pending_usb.pop(endpoint, None)
-        quarantine = self._usb_quarantines.pop(endpoint, None)
-        if quarantine is not None:
-            quarantine.close()
 
-    async def quiesce_device(self, device_id: str) -> dict[str, Any]:
-        """Close one local USB session while retaining its cross-process lock."""
-
-        session = self.get(device_id)
-        return await self.quiesce_endpoint(session.link.endpoint)
-
-    def maintenance_endpoint(self, identifier: str) -> dict[str, Any]:
+    def host_endpoint(self, identifier: str) -> dict[str, Any]:
         """Resolve or register one physical endpoint without opening a session."""
 
         if identifier in self._pending_usb:
@@ -564,27 +536,25 @@ class IrisHub:
         self._endpoint_configs[endpoint] = (opener, None)
         return state.copy()
 
-    async def quiesce_endpoint(self, identifier: str) -> dict[str, Any]:
+    async def detach_for_host(self, identifier: str) -> dict[str, Any]:
         """Close one local USB endpoint even when HELLO identity is unavailable."""
 
-        resolved = self.maintenance_endpoint(identifier)
+        resolved = self.host_endpoint(identifier)
         endpoint = str(resolved["endpoint"])
         if not endpoint.startswith("usb:"):
-            raise RuntimeError("host maintenance is supported only for local USB devices")
+            raise RuntimeError("host operations require a local USB endpoint")
         if self.ownership is not None:
             self.ownership.acquire(endpoint, resolved)
         state = self._endpoint_states.get(endpoint)
         if state is None:
             raise RuntimeError("device endpoint state is unavailable")
-        if endpoint in self._maintenance_endpoints:
-            raise RuntimeError("device endpoint is already reserved for maintenance")
+        if endpoint in self._host_endpoints:
+            raise RuntimeError("device endpoint has an active host operation")
         device_id = str(state.get("device_id") or "")
         session = self._devices.get(device_id) if device_id else None
         self._claim_usb(endpoint, state)
-        state["resume_after_maintenance"] = endpoint in self._endpoint_tasks
-        self._maintenance_endpoints.add(endpoint)
-        if self.ownership is not None:
-            self.ownership.maintenance(endpoint, True)
+        state["resume_after_host"] = endpoint in self._endpoint_tasks
+        self._host_endpoints.add(endpoint)
         task = self._endpoint_tasks.pop(endpoint, None)
         if task is not None:
             task.cancel()
@@ -593,7 +563,7 @@ class IrisHub:
         if device_id:
             self._devices.pop(device_id, None)
         state.update(
-            state="maintenance_detached",
+            state="host_operation",
             device_id=device_id or None,
             error=None,
             updated_monotonic_ns=time.monotonic_ns(),
@@ -602,7 +572,7 @@ class IrisHub:
             await self._on_event(
                 {
                     "kind": "connection",
-                    "connection_state": "maintenance_detached",
+                    "connection_state": "host_operation",
                     "device_id": device_id,
                     "boot_id": session.info.boot_id if session and session.info else None,
                     "session_id": (
@@ -615,77 +585,25 @@ class IrisHub:
             )
         return state.copy()
 
-    def reserve_maintenance_endpoint(self, endpoint_state: dict[str, Any]) -> None:
-        """Quarantine an endpoint restored from a durable maintenance lease."""
+    def yield_host_lock(self, endpoint: str) -> None:
+        """Let the supervised writer acquire the physical lock; retain ownership."""
+        if endpoint not in self._host_endpoints:
+            raise RuntimeError("endpoint was not detached for a host operation")
+        lock = self._locks.pop(endpoint, None)
+        if lock is not None:
+            lock.close()
 
-        endpoint = str(endpoint_state["endpoint"])
-        if not endpoint.startswith("usb:"):
+    async def resume_after_host(self, endpoint: str, *, connect: bool = False) -> None:
+        if endpoint not in self._host_endpoints:
             return
-        if endpoint in self._maintenance_endpoints:
-            return
-        if self.ownership is not None:
-            self.ownership.restore_maintenance(endpoint_state)
-        quarantine = UsbQuarantine(endpoint_state)
-        self._usb_quarantines[endpoint] = quarantine
-        self._maintenance_endpoints.add(endpoint)
-        self._endpoint_states[endpoint] = {
-            **endpoint_state,
-            "state": "maintenance_unresolved",
-            "device_id": None,
-            "updated_monotonic_ns": time.monotonic_ns(),
-        }
-        # Legacy records do not authorize automatic adoption of a serial port.
-        self._endpoint_states[endpoint].setdefault("resume_after_maintenance", False)
-        self._endpoint_states[endpoint].setdefault("allow_serial_jtag", False)
-
-        async def opener() -> Link:
-            return await self._open_usb(endpoint)
-
-        self._endpoint_configs[endpoint] = (opener, None)
-        self._resolve_usb_reservation(endpoint)
-        if endpoint in self._usb_quarantines:
-            self._ensure_usb_retry()
-
-    def _resolve_usb_reservation(self, endpoint: str) -> None:
-        state = self._endpoint_states[endpoint]
-        selector = reservation_selector(state)
-        try:
-            if selector is None:
-                raise OSError(
-                    "Saved USB identity is insufficient; cancel the maintenance "
-                    "lease before selecting the recovery endpoint again"
-                )
-            if selector.startswith("usb:location="):
-                # The canonical physical lock is meaningful even while absent.
-                metadata = {**state, "location": selector[len("usb:location="):]}
-            else:
-                metadata = resolve_usb_port(selector)
-            self._claim_usb(endpoint, metadata)
-        except (OSError, RuntimeError) as exc:
-            state.update(state="maintenance_unresolved", error=str(exc))
-            return
-        state.update(lock_endpoint=usb_endpoint(metadata),
-                     state="maintenance_detached", error=None)
-        self._usb_quarantines.pop(endpoint).close()
-
-    async def resume_maintenance_endpoint(self, endpoint: str, *, restore_only: bool = False) -> None:
-        if endpoint not in self._maintenance_endpoints:
-            raise RuntimeError("device endpoint is not reserved for maintenance")
-        if self.ownership is not None:
-            self.ownership.maintenance(endpoint, False)
-        if restore_only and not self._endpoint_states[endpoint].get("resume_after_maintenance", False):
+        if not connect and not self._endpoint_states[endpoint].get("resume_after_host", False):
             await self._remove_endpoint(endpoint)
+            if self.ownership is not None:
+                self.ownership.release(endpoint)
             return
-        if endpoint in self._usb_quarantines:
-            self._resolve_usb_reservation(endpoint)
-            if endpoint in self._usb_quarantines:
-                raise RuntimeError(self._endpoint_states[endpoint]["error"])
-        try:
-            opener, pairing_token = self._endpoint_configs[endpoint]
-        except KeyError as exc:
-            raise RuntimeError("device endpoint cannot be reopened") from exc
-        self._maintenance_endpoints.remove(endpoint)
-        self._add_supervisor(endpoint, opener, pairing_token=pairing_token)
+        opener, pairing_token = self._endpoint_configs[endpoint]
+        self._host_endpoints.remove(endpoint)
+        self._add_supervisor(endpoint, opener, pairing_token=pairing_token, defer_lock=True)
 
     def _set_endpoint_state(
         self,
@@ -1101,6 +1019,9 @@ class IrisHub:
                     await session.mirror_stop(SCREEN_CHANNEL)
                     self._mirror_states.pop(key, None)
 
+    def active_mirrors(self, device_id: str) -> list[int]:
+        return sorted(key[1] for key in self._mirror_states if key[0] == device_id)
+
     async def mirror_start(
         self,
         device_id: str,
@@ -1281,11 +1202,8 @@ class IrisHub:
                 await task
         self._endpoint_tasks.clear()
         self._endpoint_configs.clear()
-        self._maintenance_endpoints.clear()
+        self._host_endpoints.clear()
         self._mirror_states.clear()
         for lock in self._locks.values():
             lock.close()
         self._locks.clear()
-        for quarantine in self._usb_quarantines.values():
-            quarantine.close()
-        self._usb_quarantines.clear()

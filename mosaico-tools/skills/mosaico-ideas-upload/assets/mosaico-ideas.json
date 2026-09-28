@@ -1,0 +1,20 @@
+{
+  "schema": "mosaico-ideas/project-upload/v1",
+  "project": {
+    "title": "",
+    "categories": [],
+    "boards": [],
+    "tags": [],
+    "license": "",
+    "external_links": []
+  },
+  "content": {
+    "readme": "README.md",
+    "covers": [],
+    "resources": [],
+    "attachments": []
+  },
+  "release": {
+    "changelog": ""
+  }
+}

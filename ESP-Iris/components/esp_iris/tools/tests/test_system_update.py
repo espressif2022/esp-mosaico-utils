@@ -144,6 +144,37 @@ def test_unsigned_bundle_round_trip_requires_no_key(tmp_path) -> None:
     assert bundle.key_id is None
     assert bundle.as_dict()["signature_verified"] is False
     assert "source_layout_sha256" not in bundle.as_dict()
+    assert bundle.as_dict()["release"] is None
+    assert bundle.as_dict()["minimum_recovery_version"] is None
+
+
+@pytest.mark.parametrize("length", [1, 64])
+def test_bundle_inspection_preserves_release_and_recovery_version(tmp_path, length) -> None:
+    (tmp_path / "partition-table.bin").write_bytes(b"partition")
+    (tmp_path / "ota_0.bin").write_bytes(_application_image())
+    manifest = _manifest("00" * 32)
+    manifest.pop("signature")
+    manifest["release"] = "v" * length
+    manifest["minimum_recovery_version"] = "r" * length
+    output = build_system_update_bundle(tmp_path / "metadata.irisfw", manifest, tmp_path)
+    bundle = load_system_update_bundle(output)
+    metadata = bundle.as_dict()
+    assert metadata["release"] == "v" * length
+    assert metadata["minimum_recovery_version"] == "r" * length
+    assert json.dumps(metadata, sort_keys=True) == json.dumps(bundle.as_dict(), sort_keys=True)
+
+
+@pytest.mark.parametrize("field", ["release", "minimum_recovery_version"])
+@pytest.mark.parametrize("value", ["", "x" * 65, 123])
+def test_bundle_rejects_invalid_release_metadata(tmp_path, field, value) -> None:
+    (tmp_path / "partition-table.bin").write_bytes(b"partition")
+    (tmp_path / "ota_0.bin").write_bytes(_application_image())
+    manifest = _manifest("00" * 32)
+    manifest.pop("signature")
+    manifest[field] = value
+    with pytest.raises((TypeError, ValueError)):
+        output = build_system_update_bundle(tmp_path / "metadata.irisfw", manifest, tmp_path)
+        load_system_update_bundle(output)
 
 
 def test_bundle_rejects_obsolete_source_layout_authorization(tmp_path) -> None:

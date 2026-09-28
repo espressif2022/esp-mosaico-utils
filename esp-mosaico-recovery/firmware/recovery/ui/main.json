@@ -90,7 +90,7 @@
       "text_align": "right",
       "bind": "usb_status",
       "name": "usb_status",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "label",
@@ -117,7 +117,7 @@
       "text_align": "right",
       "bind": "network_status",
       "name": "network_status",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "label",
@@ -132,7 +132,7 @@
       "text_align": "center",
       "bind": "address",
       "name": "address",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "label",
@@ -141,7 +141,7 @@
       "y": 327,
       "w": 432,
       "h": 24,
-      "text": "mosaico-spark.espressif.com",
+      "text": "mosaico-ideas.espressif.com",
       "font_size": 16,
       "fg_color": "#91919B",
       "text_align": "center"
@@ -249,7 +249,7 @@
       "y": 12,
       "w": 52,
       "h": 48,
-      "text": "\u2039",
+      "text": "‹",
       "font_size": 20,
       "fg_color": "#FCFCFF",
       "bg_color": "#242426",
@@ -298,7 +298,7 @@
       "text_align": "left",
       "bind": "wifi_connection",
       "name": "wifi_connection",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "label",
@@ -313,7 +313,7 @@
       "text_align": "left",
       "bind": "wifi_detail",
       "name": "wifi_detail",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "button",
@@ -349,7 +349,7 @@
       "text_align": "left",
       "bind": "wifi_scan",
       "name": "wifi_scan",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "button",
@@ -422,7 +422,7 @@
       "text_align": "left",
       "bind": "networks_title",
       "name": "networks_title",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "label",
@@ -437,7 +437,7 @@
       "text_align": "left",
       "bind": "networks_detail",
       "name": "networks_detail",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "label",
@@ -446,7 +446,7 @@
       "y": 10,
       "w": 30,
       "h": 44,
-      "text": "\u203a",
+      "text": "›",
       "font_size": 24,
       "fg_color": "#91919B",
       "text_align": "left",
@@ -465,7 +465,7 @@
       "text_align": "center",
       "bind": "wifi_note",
       "name": "wifi_note",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "layer",
@@ -486,7 +486,7 @@
       "y": 12,
       "w": 52,
       "h": 48,
-      "text": "\u2039",
+      "text": "‹",
       "font_size": 20,
       "fg_color": "#FCFCFF",
       "bg_color": "#242426",
@@ -525,7 +525,7 @@
       "text_align": "left",
       "bind": "ssid",
       "name": "ssid",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "label",
@@ -540,7 +540,7 @@
       "text_align": "left",
       "bind": "password_display",
       "name": "password_display",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "button",
@@ -576,7 +576,7 @@
       "text_align": "left",
       "bind": "password_error",
       "name": "password_error",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "keyboard",
@@ -628,7 +628,7 @@
       "y": 12,
       "w": 52,
       "h": 48,
-      "text": "\u2039",
+      "text": "‹",
       "font_size": 20,
       "fg_color": "#FCFCFF",
       "bg_color": "#242426",
@@ -689,7 +689,7 @@
       "text_align": "left",
       "bind": "pairing_endpoint",
       "name": "pairing_endpoint",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "label",
@@ -726,7 +726,7 @@
       "text_align": "center",
       "bind": "pairing_token",
       "name": "pairing_token",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "label",
@@ -759,7 +759,7 @@
       "y": 12,
       "w": 52,
       "h": 48,
-      "text": "\u2039",
+      "text": "‹",
       "font_size": 20,
       "fg_color": "#FCFCFF",
       "bg_color": "#242426",
@@ -786,66 +786,54 @@
       "text_align": "center"
     },
     {
+      "type": "image",
+      "parent": 49,
+      "x": 147,
+      "y": 70,
+      "w": 185,
+      "h": 185,
+      "image": "assets/ideas-qr.png",
+      "name": "ideas_qr"
+    },
+    {
+      "type": "label",
+      "parent": 49,
+      "x": 24,
+      "y": 259,
+      "w": 432,
+      "h": 24,
+      "text": "mosaico-ideas.espressif.com",
+      "font_size": 16,
+      "fg_color": "#91919B",
+      "text_align": "center"
+    },
+    {
       "type": "container",
       "parent": 49,
       "x": 24,
-      "y": 85,
+      "y": 291,
       "w": 432,
-      "h": 85,
+      "h": 91,
       "bg_color": "#242426",
       "radius": 18
     },
     {
       "type": "label",
       "parent": 49,
-      "x": 40,
-      "y": 92,
-      "w": 400,
-      "h": 30,
-      "text": "CHOOSE YOUR NEXT IDEA",
+      "x": 24,
+      "y": 293,
+      "w": 432,
+      "h": 24,
+      "text": "PAIRING CODE",
       "font_size": 16,
       "fg_color": "#91919B",
-      "text_align": "left"
-    },
-    {
-      "type": "label",
-      "parent": 49,
-      "x": 40,
-      "y": 125,
-      "w": 400,
-      "h": 30,
-      "text": "mosaico-spark.espressif.com",
-      "font_size": 20,
-      "fg_color": "#FCFCFF",
       "text_align": "center"
     },
     {
       "type": "label",
       "parent": 49,
-      "x": 24,
-      "y": 190,
-      "w": 432,
-      "h": 30,
-      "text": "PAIRING CODE",
-      "font_size": 16,
-      "fg_color": "#91919B",
-      "text_align": "left"
-    },
-    {
-      "type": "container",
-      "parent": 49,
-      "x": 24,
-      "y": 227,
-      "w": 432,
-      "h": 115,
-      "bg_color": "#242426",
-      "radius": 18
-    },
-    {
-      "type": "label",
-      "parent": 49,
       "x": 36,
-      "y": 237,
+      "y": 317,
       "w": 408,
       "h": 58,
       "text": "----------",
@@ -854,34 +842,22 @@
       "text_align": "center",
       "bind": "bridge_code",
       "name": "bridge_code",
-      "font_charset": "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"
+      "font_charset": " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"
     },
     {
       "type": "label",
       "parent": 49,
       "x": 36,
-      "y": 296,
+      "y": 385,
       "w": 408,
-      "h": 35,
+      "h": 28,
       "text": "Connecting",
       "font_size": 16,
       "fg_color": "#91919B",
       "text_align": "center",
       "bind": "bridge_detail",
       "name": "bridge_detail",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
-    },
-    {
-      "type": "label",
-      "parent": 49,
-      "x": 24,
-      "y": 355,
-      "w": 432,
-      "h": 54,
-      "text": "Choose an app and enter this code.\nOne pairing allows one install.",
-      "font_size": 16,
-      "fg_color": "#91919B",
-      "text_align": "center"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "button",
@@ -918,12 +894,12 @@
     },
     {
       "type": "button",
-      "parent": 61,
+      "parent": 59,
       "x": 12,
       "y": 12,
       "w": 52,
       "h": 48,
-      "text": "\u2039",
+      "text": "‹",
       "font_size": 20,
       "fg_color": "#FCFCFF",
       "bg_color": "#242426",
@@ -939,7 +915,7 @@
     },
     {
       "type": "label",
-      "parent": 61,
+      "parent": 59,
       "x": 72,
       "y": 12,
       "w": 336,
@@ -951,7 +927,7 @@
     },
     {
       "type": "label",
-      "parent": 61,
+      "parent": 59,
       "x": 24,
       "y": 79,
       "w": 320,
@@ -962,11 +938,11 @@
       "text_align": "left",
       "bind": "nand_scan",
       "name": "nand_scan",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "button",
-      "parent": 61,
+      "parent": 59,
       "x": 354,
       "y": 79,
       "w": 102,
@@ -987,7 +963,7 @@
     },
     {
       "type": "list",
-      "parent": 61,
+      "parent": 59,
       "x": 24,
       "y": 139,
       "w": 432,
@@ -1014,7 +990,7 @@
     },
     {
       "type": "label",
-      "parent": 67,
+      "parent": 65,
       "x": 16,
       "y": 6,
       "w": 362,
@@ -1025,11 +1001,11 @@
       "text_align": "left",
       "bind": "bundles_title",
       "name": "bundles_title",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "label",
-      "parent": 67,
+      "parent": 65,
       "x": 16,
       "y": 39,
       "w": 362,
@@ -1040,16 +1016,16 @@
       "text_align": "left",
       "bind": "bundles_detail",
       "name": "bundles_detail",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "label",
-      "parent": 67,
+      "parent": 65,
       "x": 389,
       "y": 15,
       "w": 30,
       "h": 45,
-      "text": "\u203a",
+      "text": "›",
       "font_size": 24,
       "fg_color": "#91919B",
       "text_align": "left"
@@ -1068,12 +1044,12 @@
     },
     {
       "type": "button",
-      "parent": 71,
+      "parent": 69,
       "x": 12,
       "y": 12,
       "w": 52,
       "h": 48,
-      "text": "\u2039",
+      "text": "‹",
       "font_size": 20,
       "fg_color": "#FCFCFF",
       "bg_color": "#242426",
@@ -1089,7 +1065,7 @@
     },
     {
       "type": "label",
-      "parent": 71,
+      "parent": 69,
       "x": 72,
       "y": 12,
       "w": 336,
@@ -1101,7 +1077,7 @@
     },
     {
       "type": "container",
-      "parent": 71,
+      "parent": 69,
       "x": 24,
       "y": 87,
       "w": 432,
@@ -1111,7 +1087,7 @@
     },
     {
       "type": "label",
-      "parent": 71,
+      "parent": 69,
       "x": 40,
       "y": 95,
       "w": 400,
@@ -1123,7 +1099,7 @@
     },
     {
       "type": "label",
-      "parent": 71,
+      "parent": 69,
       "x": 40,
       "y": 133,
       "w": 400,
@@ -1134,11 +1110,11 @@
       "text_align": "left",
       "bind": "release",
       "name": "release",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "label",
-      "parent": 71,
+      "parent": 69,
       "x": 40,
       "y": 178,
       "w": 400,
@@ -1149,11 +1125,11 @@
       "text_align": "left",
       "bind": "release_detail",
       "name": "release_detail",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "label",
-      "parent": 71,
+      "parent": 69,
       "x": 40,
       "y": 215,
       "w": 400,
@@ -1164,11 +1140,11 @@
       "text_align": "left",
       "bind": "release_path",
       "name": "release_path",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "label",
-      "parent": 71,
+      "parent": 69,
       "x": 24,
       "y": 286,
       "w": 432,
@@ -1180,7 +1156,7 @@
     },
     {
       "type": "button",
-      "parent": 71,
+      "parent": 69,
       "x": 24,
       "y": 405,
       "w": 204,
@@ -1201,7 +1177,7 @@
     },
     {
       "type": "button",
-      "parent": 71,
+      "parent": 69,
       "x": 252,
       "y": 405,
       "w": 204,
@@ -1234,7 +1210,7 @@
     },
     {
       "type": "label",
-      "parent": 82,
+      "parent": 80,
       "x": 72,
       "y": 12,
       "w": 336,
@@ -1246,11 +1222,11 @@
     },
     {
       "type": "label",
-      "parent": 82,
+      "parent": 80,
       "x": 24,
-      "y": 98,
+      "y": 76,
       "w": 432,
-      "h": 65,
+      "h": 48,
       "text": "Updating system",
       "font_size": 32,
       "fg_color": "#FCFCFF",
@@ -1261,39 +1237,39 @@
     },
     {
       "type": "label",
-      "parent": 82,
+      "parent": 80,
       "x": 24,
-      "y": 180,
+      "y": 130,
       "w": 432,
-      "h": 64,
+      "h": 48,
       "text": "Preparing update",
       "font_size": 20,
       "fg_color": "#91919B",
       "text_align": "center",
       "bind": "update_detail",
       "name": "update_detail",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "label",
-      "parent": 82,
+      "parent": 80,
       "x": 24,
-      "y": 256,
+      "y": 182,
       "w": 432,
-      "h": 48,
+      "h": 45,
       "text": "0%",
       "font_size": 32,
       "fg_color": "#FCFCFF",
       "text_align": "center",
       "bind": "update_percent",
       "name": "update_percent",
-      "font_charset": "0123456789%"
+      "font_charset": "0123456789%-"
     },
     {
       "type": "progress",
-      "parent": 82,
+      "parent": 80,
       "x": 24,
-      "y": 323,
+      "y": 236,
       "w": 432,
       "h": 12,
       "name": "progress",
@@ -1305,11 +1281,11 @@
     },
     {
       "type": "label",
-      "parent": 82,
+      "parent": 80,
       "x": 24,
-      "y": 356,
+      "y": 366,
       "w": 216,
-      "h": 34,
+      "h": 30,
       "text": "Session owner",
       "font_size": 16,
       "fg_color": "#91919B",
@@ -1317,26 +1293,26 @@
     },
     {
       "type": "label",
-      "parent": 82,
+      "parent": 80,
       "x": 240,
-      "y": 356,
+      "y": 366,
       "w": 216,
-      "h": 34,
+      "h": 30,
       "text": "",
       "font_size": 16,
       "fg_color": "#FCFCFF",
       "text_align": "right",
       "bind": "update_owner",
       "name": "update_owner",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "label",
-      "parent": 82,
+      "parent": 80,
       "x": 24,
-      "y": 393,
+      "y": 402,
       "w": 216,
-      "h": 34,
+      "h": 30,
       "text": "Verification",
       "font_size": 16,
       "fg_color": "#91919B",
@@ -1344,22 +1320,22 @@
     },
     {
       "type": "label",
-      "parent": 82,
+      "parent": 80,
       "x": 240,
-      "y": 393,
+      "y": 402,
       "w": 216,
-      "h": 34,
+      "h": 30,
       "text": "",
       "font_size": 16,
       "fg_color": "#FCFCFF",
       "text_align": "right",
       "bind": "update_verified",
       "name": "update_verified",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "label",
-      "parent": 82,
+      "parent": 80,
       "x": 24,
       "y": 441,
       "w": 432,
@@ -1383,7 +1359,7 @@
     },
     {
       "type": "label",
-      "parent": 93,
+      "parent": 91,
       "x": 72,
       "y": 12,
       "w": 336,
@@ -1395,7 +1371,7 @@
     },
     {
       "type": "label",
-      "parent": 93,
+      "parent": 91,
       "x": 24,
       "y": 120,
       "w": 432,
@@ -1410,7 +1386,7 @@
     },
     {
       "type": "label",
-      "parent": 93,
+      "parent": 91,
       "x": 24,
       "y": 212,
       "w": 432,
@@ -1421,11 +1397,11 @@
       "text_align": "center",
       "bind": "result_detail",
       "name": "result_detail",
-      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\u2039\u203a\u2022"
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     },
     {
       "type": "button",
-      "parent": 93,
+      "parent": 91,
       "x": 96,
       "y": 381,
       "w": 288,
@@ -1458,6 +1434,66 @@
       "name": "password_toggle",
       "bind": "password_toggle",
       "font_charset": "ShowHide"
+    },
+    {
+      "type": "label",
+      "parent": 49,
+      "x": 36,
+      "y": 317,
+      "w": 408,
+      "h": 58,
+      "text": " ",
+      "font_size": 24,
+      "fg_color": "#FCFCFF",
+      "text_align": "center",
+      "bind": "bridge_code_compact",
+      "name": "bridge_code_compact",
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
+    },
+    {
+      "type": "label",
+      "parent": 80,
+      "x": 24,
+      "y": 254,
+      "w": 432,
+      "h": 30,
+      "text": "",
+      "font_size": 20,
+      "fg_color": "#91919B",
+      "text_align": "center",
+      "name": "update_bytes",
+      "bind": "update_bytes",
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
+    },
+    {
+      "type": "label",
+      "parent": 80,
+      "x": 24,
+      "y": 291,
+      "w": 432,
+      "h": 32,
+      "text": "",
+      "font_size": 24,
+      "fg_color": "#FF4C01",
+      "text_align": "center",
+      "name": "update_rate",
+      "bind": "update_rate",
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
+    },
+    {
+      "type": "label",
+      "parent": 80,
+      "x": 24,
+      "y": 329,
+      "w": 432,
+      "h": 28,
+      "text": "",
+      "font_size": 16,
+      "fg_color": "#91919B",
+      "text_align": "center",
+      "name": "update_component",
+      "bind": "update_component",
+      "font_charset": " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~‹›•"
     }
   ]
 }

@@ -107,7 +107,6 @@ def test_run_only_auto_connects_on_initial_start(created):
 @pytest.mark.parametrize("argv,path", [
     (["iris", "claim"], "/v1/project/acquire"),
     (["iris", "release"], "/v1/project/release"),
-    (["iris", "transfer", "start", "--to-session", "other"], "/v1/project/transfer"),
 ])
 def test_ownership_commands_can_omit_device_and_join_shared_gateway(argv, path):
     arguments = build_parser().parse_args(argv)
@@ -121,8 +120,8 @@ def test_ownership_commands_can_omit_device_and_join_shared_gateway(argv, path):
     assert http.call_args.args[2]["auto"] is True
 
 
-def test_transfer_destination_and_reconcile_target_still_required():
-    for argv in (["iris", "transfer", "start"], ["iris", "reconcile"]):
+def test_takeover_and_reconcile_require_explicit_target():
+    for argv in (["iris", "takeover", "start"], ["iris", "reconcile"]):
         with pytest.raises(SystemExit):
             build_parser().parse_args(argv)
 

@@ -67,7 +67,7 @@ def test_idle_join_renews_once_and_private_tokens_are_not_exposed():
         lifetime.register({})
 
 
-@pytest.mark.parametrize("work", ["operations", "maintenance", "jobs", "requests", "mirrors", "streams"])
+@pytest.mark.parametrize("work", ["operations", "host_workers", "jobs", "requests", "mirrors", "streams"])
 def test_work_without_clients_defers_idle_shutdown(work):
     now = [0.0]
     lifetime = ClientLifecycle(clock=lambda: now[0])

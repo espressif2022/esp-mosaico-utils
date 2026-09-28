@@ -3,9 +3,9 @@
 | Owner | Responsibilities | Public contracts |
 | --- | --- | --- |
 | ESP-Iris | Transport, device sessions, Gateway lifetime and ownership, operations, reconnect, Workbench | Wire protocol; HTTP API/capabilities; `iris_gateway.client` host API v1 |
-| mosaico-tools | Workspace selection, build/artifact orchestration, product preconditions, evidence and user CLI | `mosaico.py`; `.mosaico.json` |
-| esp-mosaico-recovery | Retained Recovery firmware, reviewed images and persistent product format | `include/mosaico_recovery_contract.h`; reviewed manifest |
-| Application workspace | Application, board dependencies, UI and Recovery adapter | Product configuration and normal firmware |
+| mosaico-tools | Workspace selection, templates, GSP integration, build/artifact orchestration, product preconditions, evidence and user CLI | `mosaico.py`; `.mosaico.json` |
+| esp-mosaico-recovery | Retained Recovery firmware, normal-application Recovery adapter, reviewed images and persistent product format | `include/mosaico_recovery_contract.h`; reviewed manifest |
+| Application workspace | User-created application, dependency selection and UI policy | Product configuration and normal firmware |
 
 Dependencies point from product tools and firmware adapters toward these public
 contracts. Iris does not import Mosaico modules or encode Mosaico versions,
@@ -73,3 +73,7 @@ runner live under `mosaico-tools/tools` and `mosaico-tools/skills`. Recovery sou
 reviewed bundles, contracts and integration tests retain their paths.
 The old Recovery launcher, Python package path and build-runner script are
 forwarding shims with no duplicate implementation or independent version.
+
+BSP examples own complete Mosaico games and their behavior tests; the engine owns
+rendering/runtime and Host implementation tests. Shared application integration
+is documented in [mosaico-tools](../mosaico-tools/docs/application-integration.md).

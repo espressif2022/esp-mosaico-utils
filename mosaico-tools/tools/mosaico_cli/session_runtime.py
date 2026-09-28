@@ -96,7 +96,8 @@ def request(url: str, path: str, body: dict[str, Any] | None = None,
         if isinstance(remote_error, dict) and remote_error.get("code") == "selection_error":
             raise SelectionError(remote_error.get("message", "Select a device."),
                                  details=remote_error.get("details", {})) from error
-        raise DeviceError(f"Project Gateway rejected the request: {details or error.reason}") from error
+        raise DeviceError(f"Project Gateway rejected the request: {details or error.reason}",
+                          details={"remote_error": remote_error} if isinstance(remote_error, dict) else {}) from error
     except (URLError, OSError, ValueError) as error:
         raise DeviceError(f"Project Gateway is unavailable: {error}") from error
 

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "esp_err.h"
+#include "bsp/esp_mosaico.h"
+#include "driver/gpio.h"
 #include "esp_iris.h"
 #include "esp_log.h"
 #include "factory_network.h"
@@ -22,6 +24,19 @@ static const char *TAG = "factory";
 
 void app_main(void)
 {
+    /* Software restart can retain the application's amplifier state. Keep
+     * the speaker physically muted before starting any Recovery services. */
+    const gpio_config_t pa_config = {
+        .pin_bit_mask = 1ULL << BSP_AUDIO_PA_CTRL,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_ENABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_set_level(BSP_AUDIO_PA_CTRL, 0));
+    ESP_ERROR_CHECK(gpio_config(&pa_config));
+    ESP_ERROR_CHECK(gpio_hold_dis(BSP_AUDIO_PA_CTRL));
+
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_iris_boot_probe());
     ESP_ERROR_CHECK(nvs_flash_init());
     ESP_ERROR_CHECK(factory_system_metadata_init());

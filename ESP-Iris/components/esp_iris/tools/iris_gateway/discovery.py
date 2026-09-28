@@ -44,7 +44,7 @@ def _stable_linux_path(device: str) -> str:
 
 
 def discover_iris_usb_devices(
-    *, include_usb_serial_jtag: bool = False
+    *, include_usb_serial_jtag: bool = False, include_rom: bool = False
 ) -> list[IrisUsbDevice]:
     from serial.tools import list_ports
 
@@ -59,7 +59,8 @@ def discover_iris_usb_devices(
             and port.pid == 0x1001
             and "USB JTAG/serial debug unit" in (port.product or "")
         )
-        if is_iris_cdc or is_usb_serial_jtag:
+        is_rom = include_rom and port.vid == 0x303A and port.pid == 0x0020
+        if is_iris_cdc or is_usb_serial_jtag or is_rom:
             devices.append(
                 IrisUsbDevice(
                     path=_stable_linux_path(port.device),
@@ -144,7 +145,7 @@ def iris_usb_allowed(
         if metadata.get("pid") == 0x1001:
             return allow_serial_jtag
         if metadata.get("pid") == 0x0020:
-            # ESP32-S31 ROM download CDC belongs to the maintenance executor.
+            # ESP32-S31 ROM download CDC belongs to the ROM operation executor.
             return False
     if explicit:
         return metadata.get("vid") is not None and metadata.get("pid") is not None

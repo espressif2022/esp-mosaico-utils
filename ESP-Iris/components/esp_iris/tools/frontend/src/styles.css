@@ -251,8 +251,6 @@ td small, td code { margin-top: 4px; color: var(--faint); font-size: 10px; }
 .token-icon { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid #a786bc; color: #754e8e; font: 700 10px/1 monospace; }.token-icon.revoked { border-color: var(--line); color: var(--faint); }
 .token-list p { margin: 0; }.token-list strong, .token-list small { display: block; }.token-list strong { font-size: 12px; }.token-list small { margin-top: 4px; color: var(--faint); font: 10px/1.35 monospace; }.token-list em { color: var(--green); font: normal 10px/1 monospace; }.token-list button { border: 0; background: transparent; color: var(--red); font-size: 11px; cursor: pointer; }
 .settings-actions { display: flex; gap: 8px; padding: 14px; }
-.project-target { align-items: center; flex-wrap: wrap; font-size: 12px; }
-.project-target select { min-width: 0; max-width: 100%; }
 .project-endpoint { padding: 14px; border-top: 1px solid var(--line); font-size: 12px; overflow-wrap: anywhere; }
 .project-endpoint p { margin: 8px 0; color: var(--muted); }
 .project-endpoint .settings-actions { padding: 8px 0 0; flex-wrap: wrap; }
@@ -294,3 +292,7 @@ td small, td code { margin-top: 4px; color: var(--faint); font-size: 10px; }
   .device-details { grid-column: 1 / -1; min-height: 44px; border-top: 1px solid var(--line); }
   .heading-status span:nth-child(2) { display: none; }
 }
+
+.status-dot.idle { background: #19b37a; }
+.status-dot.busy, .status-dot.connecting { background: #d99b20; }
+.status-dot.needs_recovery { background: #df5e58; }

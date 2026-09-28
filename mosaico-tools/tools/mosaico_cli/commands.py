@@ -26,16 +26,13 @@ from .errors import (
     SelectionError,
 )
 from .gateway import (
-    acquire_endpoint_maintenance_lease,
-    acquire_maintenance_lease,
     connected_devices,
     ensure_gateway,
     ensure_iris_tools,
     enter_recovery_and_wait,
-    finish_maintenance_lease,
     gateway_devices,
     gateway_json,
-    renew_maintenance_lease,
+    run_host_operation,
     run_ota,
     run_system_update_bundle,
     select_device,
@@ -50,10 +47,18 @@ from .recovery import (
     recovery_build_defaults_are_current,
     recovery_defaults_fingerprint,
     recovery_verification_details,
+    rom_hardware_mac,
+    rom_identity_command,
 )
-from .recovery_port import lease_port, same_port, serial_jtag_candidate
+from .recovery_port import serial_jtag_candidate
 from .registry import select_model
-from .runtime import RunContext, build_application, resolve_idf_path, run_idf_target
+from .runtime import (
+    RunContext,
+    build_application,
+    idf_target_command,
+    resolve_idf_path,
+    run_idf_target,
+)
 
 _IDF_MONITOR_LOG_PATTERN = re.compile(r"^(I|W|E) \([\d:\. -]+\)")
 _IDF_MONITOR_COLORS = {
@@ -855,28 +860,12 @@ def recover(arguments: Any, context: RunContext) -> dict[str, Any]:
         def probe_unowned_rom_mac(port: str) -> str:
             if prior_session is None:
                 return read_rom_hardware_mac(context, model, port, idf_path)
-            expected_probe_version = str(
-                (manifest or {}).get("version") or "current-source"
-            )
-            probe_lease = acquire_endpoint_maintenance_lease(
-                context,
-                prior_session,
-                endpoint=port,
-                expected_version=expected_probe_version,
-                timeout=min(arguments.timeout, 30),
-            )
-            try:
-                return read_rom_hardware_mac(
-                    context, model, lease_port(probe_lease), idf_path
-                )
-            finally:
-                finish_maintenance_lease(
-                    context,
-                    prior_session,
-                    probe_lease,
-                    abort=True,
-                    timeout=min(arguments.timeout, 30),
-                )
+            result = run_host_operation(context, prior_session, {
+                "action": "host.probe", "endpoint": port,
+                "commands": [rom_identity_command(model, "{port}", idf_path)],
+                "timeout": min(arguments.timeout, 30),
+            }, timeout=min(arguments.timeout, 45))
+            return rom_hardware_mac(result["stdout"])
 
         unowned_port = provisioning_candidate(
             context,
@@ -891,8 +880,7 @@ def recover(arguments: Any, context: RunContext) -> dict[str, Any]:
                 f"hardware_mac={selected_hardware_mac}"
             )
         elif arguments.source == "current":
-            rom_hardware_mac = probe_unowned_rom_mac(unowned_port)
-            selected_hardware_mac = rom_hardware_mac
+            selected_hardware_mac = probe_unowned_rom_mac(unowned_port)
             context.status(
                 f"device: recovery interface ready at {unowned_port} "
                 f"hardware_mac={selected_hardware_mac}"
@@ -925,7 +913,7 @@ def recover(arguments: Any, context: RunContext) -> dict[str, Any]:
     if prior_session is None:
         raise DeviceError("The local Gateway is required to verify Recovery.")
 
-    context.status("bundle: preparing all Recovery artifacts before device maintenance")
+    context.status("bundle: preparing all Recovery artifacts before acquiring the device")
     required_recovery_components = (
         workspace.bsp_path / "components" / "esp-mosaico-bsp",
         workspace.esp_iris_path / "components" / "esp_iris",
@@ -985,106 +973,35 @@ def recover(arguments: Any, context: RunContext) -> dict[str, Any]:
     prepared_manifest = load_bundle(prepared_dir, model.target)
     expected_version = str(prepared_manifest.get("version") or "")
 
-    lease: dict[str, Any] | None = None
-    auxiliary_lease: dict[str, Any] | None = None
-    lease_finished = False
-    auxiliary_finished = False
-    try:
-        if prior_device is not None and prior_device_id:
-            context.status(f"gateway: acquiring maintenance lease for {prior_device_id}")
-            lease = acquire_maintenance_lease(
-                context, prior_session, device_id=prior_device_id,
-                expected_version=expected_version, timeout=arguments.timeout,
-            )
-        else:
-            assert unowned_port is not None
-            lease = acquire_endpoint_maintenance_lease(
-                context, prior_session, endpoint=unowned_port,
-                expected_version=expected_version, timeout=arguments.timeout,
-            )
-        port = lease_port(lease)
-        if independent_identity is not None:
-            evidence = lease.get("evidence", {})
-            before = evidence.get("device_before", {}) if isinstance(evidence, dict) else {}
-            if before.get("device_id") != prior_device_id or not before.get("boot_id"):
-                raise DeviceError("Device maintenance lease lacks matching live identity evidence.")
-            prior_boot_id = str(before["boot_id"])
-            plan["previous_boot_id"] = prior_boot_id
-            if same_port(port, independent_identity["path"]):
-                raise DeviceError("--recovery-port must be independent of the managed USB endpoint.")
-            auxiliary_lease = acquire_endpoint_maintenance_lease(
-                context, prior_session, endpoint=independent_identity["path"],
-                expected_version=expected_version, timeout=arguments.timeout,
-            )
-            if not same_port(lease_port(auxiliary_lease), independent_identity["path"]):
-                raise DeviceError("Gateway leased a different recovery endpoint.")
-            auxiliary_evidence = auxiliary_lease.get("evidence", {})
-            attached_id = auxiliary_evidence.get("expected_device_id") if isinstance(auxiliary_evidence, dict) else None
-            if attached_id and attached_id != prior_device_id:
-                raise DeviceError("Independent endpoint is owned by a different live device.")
-            port = independent_identity["path"]
-            # Re-enumerate after bundle preparation and both leases, before reset/write.
-            if serial_jtag_candidate(port) != independent_identity:
-                raise DeviceError("USB Serial/JTAG identity changed during Recovery preparation.")
-            (context.directory / "recovery-route.json").write_text(json.dumps({
-                "device_id": prior_device_id, "previous_boot_id": prior_boot_id,
-                "managed_lease_id": lease["lease_id"],
-                "independent_lease_id": auxiliary_lease["lease_id"],
-                "write_endpoint": independent_identity,
-                "association": "explicit operator selection; no MAC inference",
-            }, indent=2) + "\n", encoding="utf-8")
-        for active in (lease, auxiliary_lease):
-            if active is not None:
-                renew_maintenance_lease(context, prior_session, active,
-                                        ttl_seconds=arguments.timeout + 60)
-        if selected_hardware_mac and (
-            unowned_port is not None or independent_identity is not None
-        ):
-            current_hardware_mac = read_rom_hardware_mac(
-                context, model, port, idf_path
-            )
-            if current_hardware_mac != selected_hardware_mac:
-                raise DeviceError(
-                    "ROM endpoint hardware MAC changed before flashing; refusing to write."
-                )
-        context.status(f"flash: writing the prepared complete Recovery bundle via {port}")
-        run_idf_target(
-            context, idf_path=idf_path, project=recovery_project,
-            build_dir=build_dir, target="mosaico-recover-flash",
-            definitions=recovery_definitions, port=port, timeout=arguments.timeout,
-        )
-        context.status("gateway: verifying Recovery on the original managed Device ID")
-        completed = finish_maintenance_lease(
-            context, prior_session, lease, abort=False, timeout=arguments.timeout,
-        )
-        lease_finished = True
-        evidence = completed.get("evidence", {})
-        status = evidence.get("verification", {}) if isinstance(evidence, dict) else {}
-        if (selected_hardware_mac
-                and status.get("hardware_mac") != selected_hardware_mac):
-            raise OperationError(
-                "Recovery did not report the factory Base MAC selected in ROM mode."
-            )
-        if independent_identity is not None:
-            if (status.get("device_id") != prior_device_id
-                    or not status.get("boot_id") or str(status["boot_id"]) == prior_boot_id
-                    or status.get("firmware_mode") != "recovery"
-                    or status.get("app_version") != expected_version):
-                raise OperationError("Independent-port Recovery did not verify the same device, new boot and expected Recovery firmware.")
-            # The auxiliary endpoint is a transport reservation, not a second
-            # firmware acceptance authority. Release it only after HS-USB verifies.
-            finish_maintenance_lease(context, prior_session, auxiliary_lease,
-                                     abort=True, timeout=min(arguments.timeout, 30))
-            auxiliary_finished = True
-    except BaseException:
-        for active, finished in ((lease, lease_finished), (auxiliary_lease, auxiliary_finished)):
-            if active is not None and not finished:
-                try:
-                    finish_maintenance_lease(context, prior_session, active,
-                                             abort=True, timeout=min(arguments.timeout, 30))
-                except (DeviceError, OperationError):
-                    context.note("warning: maintenance lease remains quarantined; inspect the local Gateway")
-        raise
+    commands = []
+    if independent_identity is not None:
+        if serial_jtag_candidate(independent_identity["path"]) != independent_identity:
+            raise DeviceError("USB Serial/JTAG identity changed during Recovery preparation.")
+    if selected_hardware_mac and (unowned_port is not None or independent_identity is not None):
+        probe = rom_identity_command(model, "{port}", idf_path)
+        probe["expect"] = {"pattern": r"(?i)MAC:\s*([0-9a-f]{2}(?::[0-9a-f]{2}){5})",
+                           "value": selected_hardware_mac}
+        commands.append(probe)
+    commands.append(idf_target_command(
+        context, idf_path=idf_path, project=recovery_project, build_dir=build_dir,
+        target="mosaico-recover-flash", definitions=recovery_definitions,
+        port="{port}", timeout=arguments.timeout,
+    ))
+    context.status("gateway: running ROM write and Recovery verification as one operation")
+    completed = run_host_operation(context, prior_session, {
+        "action": "host.recovery", "device_id": prior_device_id if prior_device else None,
+        "endpoint": unowned_port,
+        "write_endpoint": independent_identity["path"] if independent_identity else None,
+        "expected_version": expected_version, "expected_hardware_mac": selected_hardware_mac,
+        "commands": commands, "timeout": arguments.timeout,
+    }, timeout=arguments.timeout * 2 + 30)
+    status = completed.get("evidence", {}).get("verification", {})
+    if (status.get("firmware_mode") != "recovery" or not status.get("boot_id")
+            or (prior_boot_id and str(status["boot_id"]) == prior_boot_id)
+            or status.get("app_version") != expected_version
+            or "ota" not in status.get("capability_names", [])
+            or (selected_hardware_mac and status.get("hardware_mac") != selected_hardware_mac)):
+        raise OperationError("ROM operation did not verify the expected Recovery identity and new boot.")
 
     verified_device_id = str(status.get("device_id") or prior_device_id or "")
     if prior_device_id and verified_device_id != prior_device_id:
@@ -1108,8 +1025,7 @@ def recover(arguments: Any, context: RunContext) -> dict[str, Any]:
         "hardware_mac": status.get("hardware_mac") or selected_hardware_mac,
         "boot_id": status.get("boot_id"),
         "gateway_started": prior_session.started_local,
-        "maintenance_lease_id": lease.get("lease_id") if lease else None,
-        "recovery_endpoint_lease_id": auxiliary_lease.get("lease_id") if auxiliary_lease else None,
+        "operation_id": completed["operation_id"],
     }
 
 

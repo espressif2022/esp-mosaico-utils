@@ -63,6 +63,28 @@ config IRIS_FACTORY_BRIDGE_BOARD_ID
         Required before entering Bridge download mode. Factory update
         manifests must match this board identifier.
 
+config IRIS_FACTORY_BRIDGE_SYSTEM_UPDATE
+    bool "Enable Bridge full system-update bundles"
+    default y
+    depends on IRIS_FACTORY_SYSTEM_UPDATE_BACKEND
+    help
+        Advertise the system_update capability and accept validated .irisfw
+        transactions from the configured HTTPS Bridge service. This is local
+        product policy; incoming manifests cannot enable the capability.
+        Legacy application/data/layout and Recovery self-update modes are
+        unaffected. Validate the complete product on hardware before enabling.
+
+config IRIS_FACTORY_BRIDGE_BOOTLOADER_UPDATE
+    bool "Allow Bridge bootloader replacement"
+    default y
+    depends on IRIS_FACTORY_BRIDGE_SYSTEM_UPDATE
+    help
+        Advertise bootloader_update and allow the Bridge source to stage a
+        bootloader and matching partition table in the shared writer backend.
+        Commit writes the bootloader first and partition table last, with
+        readback verification. Power loss can require ROM recovery. Remote
+        manifests cannot change this local permission.
+
 config IRIS_FACTORY_NAND_SYSTEM_UPDATE
     bool "Enable recovery NAND LittleFS system-update source"
     default n

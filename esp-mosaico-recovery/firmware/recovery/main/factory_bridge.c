@@ -28,6 +28,12 @@ static esp_err_t start(bool prefetch)
         .device_id = device_id,
         .enable_factory_update = true,
         .prefetch_only = prefetch,
+#ifdef CONFIG_IRIS_FACTORY_BRIDGE_SYSTEM_UPDATE
+        .enable_system_update = true,
+#endif
+#ifdef CONFIG_IRIS_FACTORY_BRIDGE_BOOTLOADER_UPDATE
+        .enable_bootloader_update = true,
+#endif
         .network_ready = network_ready,
     };
     return iris_bridge_start(&config);

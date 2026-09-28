@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "compatibility": {
+    "chip_target": "esp32s31",
+    "product_contract": "esp-mosaico/v1",
+    "board_id": "esp-mosaico",
+    "layout_id": "mosaico-retained-recovery-2m-v1",
+    "recovery_abi": 1
+  },
+  "partition_table_offset": 32768,
+  "partition_table_region_bytes": 4096,
+  "application_region_start": 2097152,
+  "minimum_recovery_version": "0.1",
+  "immutable_layout": {
+    "otadata": [
+      "data",
+      "ota",
+      36864,
+      8192,
+      ""
+    ],
+    "phy_init": [
+      "data",
+      "phy",
+      45056,
+      4096,
+      ""
+    ],
+    "sysmeta": [
+      "data",
+      "nvs",
+      49152,
+      81920,
+      ""
+    ],
+    "factory": [
+      "app",
+      "factory",
+      131072,
+      1835008,
+      ""
+    ],
+    "coredump": [
+      "data",
+      "coredump",
+      1966080,
+      131072,
+      ""
+    ]
+  }
+}

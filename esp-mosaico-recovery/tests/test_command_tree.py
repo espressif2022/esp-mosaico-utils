@@ -16,9 +16,6 @@ from mosaico_cli.cli import build_parser, main
     ("iris claim", "device claim", ["--endpoint", "usb:location=1-2"]),
     ("iris release", "device release", ["--device-id", "board"]),
     ("iris reconcile", "device reconcile", ["--device-id", "board"]),
-    ("iris transfer start", "device transfer", ["--device-id", "board", "--to-session", "other"]),
-    *[("iris transfer " + action, "device transfer-" + action, ["--transfer-id", "transfer-1"])
-      for action in ("status", "accept", "abort", "reconcile")],
     ("iris logs", "monitor", ["--snapshot"]),
     ("iris memory", "memory", ["--follow"]),
     ("iris crash", "crash", ["--archive"]),
@@ -38,9 +35,37 @@ def test_public_command_preserves_operation_arguments(public, legacy, options):
     assert current.json is True
 
 
+@pytest.mark.parametrize("action,options", [
+    ("start", ["--device-id", "board", "--force", "--timeout", "30"]),
+    ("start", ["--endpoint", "usb:location=1-2"]),
+    *[(action, []) for action in ("status", "resume", "abort", "reconcile")],
+])
+def test_takeover_preserves_record_and_receiving_project_arguments(action, options):
+    takeover_id = "34316aaf-5c53-49c0-9d71-44ad598f20ce"
+    args = build_parser().parse_args([
+        "iris", "takeover", action, *options, "--takeover-id", takeover_id,
+        "--project", "projects/receiver", "--json",
+    ])
+    assert args.command == "device"
+    assert args.device_action == "takeover-" + action
+    assert args.public_command == "iris takeover " + action
+    assert args.takeover_id == takeover_id
+    assert args.project == "projects/receiver"
+    assert args.json is True
+    if action == "start":
+        if "--device-id" in options:
+            assert args.device_id == "board"
+            assert args.force is True
+            assert args.timeout == 30
+        else:
+            assert args.endpoint == "usb:location=1-2"
+            assert args.force is False
+            assert args.timeout == 120
+
+
 def test_help_exposes_only_the_public_root_groups():
     help_text = build_parser().format_help()
-    assert "{project,iris,doctor,recover}" in help_text
+    assert "{project,game,account,iris,doctor,recover}" in help_text
     assert "session" not in help_text
     assert "install" not in help_text
     assert "monitor" not in help_text
@@ -58,7 +83,7 @@ def test_command_words_in_values_are_not_rewritten():
 
 
 @pytest.mark.parametrize("argv", [
-    ["iris"], ["project"], ["iris", "transfer"], ["iris", "test"],
+    ["iris"], ["project"], ["iris", "takeover"], ["iris", "test"],
 ])
 def test_incomplete_groups_fail_at_parse_time(argv):
     with pytest.raises(SystemExit) as error:

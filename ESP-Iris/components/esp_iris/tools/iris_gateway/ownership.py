@@ -214,47 +214,9 @@ class OwnershipRegistry:
         return [{"endpoint": row[0], **json.loads(row[1])} for row in self.db.execute(
             "SELECT endpoint, metadata FROM identities WHERE device_id=?", (device_id,))]
 
-    def maintenance(self, endpoint: str, enabled: bool) -> None:
-        with self.transaction():
-            item = self._require(endpoint, ("owned", "maintenance"))
-            state = "maintenance" if enabled else "owned"
-            if item["device_id"]:
-                self.db.execute("UPDATE claims SET state=? WHERE owner=? AND device_id=?",
-                                (state, self.session_id, item["device_id"]))
-            else:
-                self.db.execute("UPDATE claims SET state=? WHERE resource=?", (state, endpoint))
-
-    def restore_maintenance(self, metadata: dict[str, Any]) -> None:
-        """Restore this project's durable lease without opening the interface.
-        Only the existing maintenance token can subsequently complete/abort it.
-        """
-        endpoint = str(metadata["endpoint"])
-        with self.transaction():
-            item = self.claim(endpoint)
-            if item is None:
-                previous = self.db.execute("SELECT value FROM generations WHERE resource=?", (endpoint,)).fetchone()
-                generation = int(previous[0]) + 1 if previous else 1
-                self.db.execute("INSERT INTO claims VALUES(?,?,?,'maintenance',NULL,?,NULL)",
-                                (endpoint, self.session_id, generation, json.dumps(metadata)))
-                self._remember_generations()
-                return
-            if item["owner"] != self.session_id:
-                prior = self.session(item["owner"])
-                if prior["alive"] or prior["project_id"] != self.session(self.session_id)["project_id"]:
-                    raise OwnershipConflict("maintenance belongs to another live session or project")
-            if item["state"] not in ("owned", "maintenance"):
-                raise OwnershipConflict("maintenance conflicts with a pending transfer")
-            if item["device_id"]:
-                self.db.execute("UPDATE claims SET owner=?, state='maintenance', generation=generation+1 WHERE device_id=?",
-                                (self.session_id, item["device_id"]))
-            else:
-                self.db.execute("UPDATE claims SET owner=?, state='maintenance', generation=generation+1 WHERE resource=?",
-                                (self.session_id, endpoint))
-            self._remember_generations()
-
     def reconcile_orphan(self, resource: str) -> None:
         """Explicitly release a dead owner's ordinary claim, never a transfer
-        or maintenance reservation. Physical locks must also be available.
+        reservation. Physical locks must also be available.
         """
         with contextlib.ExitStack() as locks, self.transaction():
             item = self.claim(resource)
@@ -265,7 +227,7 @@ class OwnershipRegistry:
             claims = [entry for entry in self.claims() if entry["owner"] == item["owner"]
                       and (entry["device_id"] == item["device_id"] if item["device_id"] else entry["resource"] == resource)]
             if any(entry["state"] != "owned" for entry in claims):
-                raise OwnershipConflict("maintenance/transfer reservation requires its own recovery procedure")
+                raise OwnershipConflict("transfer reservation requires its own recovery procedure")
             for entry in claims:
                 if not entry["resource"].startswith("device:"):
                     lock = EndpointLock(entry["resource"])

@@ -108,16 +108,14 @@ def test_cache_network_and_rom_are_not_automatic_usb_targets(tmp_path):
     asyncio.run(scenario())
 
 
-@pytest.mark.parametrize("state", ["owned", "maintenance", "offered", "orphan"])
+@pytest.mark.parametrize("state", ["owned", "offered", "orphan"])
 def test_reserved_and_orphaned_devices_are_never_auto_reclaimed(tmp_path, state):
     async def scenario():
         other = OwnershipRegistry(tmp_path / "ownership")
         other.register("b", "b", "/projects/b", "b")
         other.acquire(U, {})
         other.bind(U, D)
-        if state == "maintenance":
-            other.maintenance(U, True)
-        elif state == "orphan":
+        if state == "orphan":
             other.close()
         try:
             async with gateway(tmp_path) as g:
@@ -192,28 +190,13 @@ def test_one_device_with_two_owned_transports_can_be_released_offline(tmp_path):
     asyncio.run(scenario())
 
 
-def test_transfer_selects_owned_device_but_keeps_explicit_target_session(tmp_path):
-    async def scenario():
-        async with gateway(tmp_path) as g:
-            g.registry.acquire(U, {})
-            g.registry.bind(U, D)
-            with patch.object(g.project, "transfer_to", return_value={"state": "completed"}) as transfer:
-                response = await g.client.post("/v1/project/transfer", json={
-                    "auto": True, "target_session_id": "b", "transfer_id": "t",
-                })
-                assert response.status == 200
-                assert transfer.await_args.args[0]["device_id"] == D
-                assert transfer.await_args.args[0]["target_session_id"] == "b"
-    asyncio.run(scenario())
-
-
-def test_multiple_owned_devices_require_selection_for_release_and_transfer(tmp_path):
+def test_multiple_owned_devices_require_selection_for_release(tmp_path):
     async def scenario():
         async with gateway(tmp_path) as g:
             for endpoint, device in ((U, D), ("usb:location=1-3", "another")):
                 g.registry.acquire(endpoint, {})
                 g.registry.bind(endpoint, device)
-            for action in ("release", "transfer"):
+            for action in ("release",):
                 response = await g.client.post("/v1/project/" + action, json={"auto": True, "target_session_id": "b"})
                 assert response.status == 400
                 assert (await response.json())["error"]["code"] == "selection_error"

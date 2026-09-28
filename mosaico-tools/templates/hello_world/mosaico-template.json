@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "paths": {
+    "utils_root": {
+      "base": "utils",
+      "path": "."
+    },
+    "bsp_root": {
+      "base": "bsp",
+      "path": "."
+    },
+    "bsp_component": {
+      "base": "bsp",
+      "path": "components/esp-mosaico-bsp"
+    },
+    "iris_component": {
+      "base": "esp_iris",
+      "path": "components/esp_iris"
+    }
+  },
+  "files": [
+    {
+      "source": "CMakeLists.txt",
+      "replacements": [
+        {
+          "pattern": "^set\\(MOSAICO_UTILS_ROOT .*\\)$",
+          "replacement": "set(MOSAICO_UTILS_ROOT \"${CMAKE_CURRENT_LIST_DIR}/{{utils_root|cmake}}\")"
+        },
+        {
+          "pattern": "^set\\(MOSAICO_BSP_ROOT .*\\)$",
+          "replacement": "set(MOSAICO_BSP_ROOT \"${CMAKE_CURRENT_LIST_DIR}/{{bsp_root|cmake}}\")"
+        },
+        {
+          "pattern": "^project\\(hello_world(?=[\\s)])",
+          "replacement": "project({{project_name}}"
+        }
+      ]
+    },
+    {
+      "source": "README.md",
+      "replacements": [
+        {
+          "pattern": "projects/my_app",
+          "replacement": "{{project_path|shell}}",
+          "count": 2
+        },
+        {
+          "pattern": "^# ESP-Mosaico Hello World",
+          "replacement": "# ESP-Mosaico {{project_name}}"
+        }
+      ]
+    },
+    {
+      "source": "main/CMakeLists.txt"
+    },
+    {
+      "source": "main/board_display.c"
+    },
+    {
+      "source": "main/board_display.h"
+    },
+    {
+      "source": "main/hello_ui.c"
+    },
+    {
+      "source": "main/hello_ui.h"
+    },
+    {
+      "source": "main/idf_component.yml",
+      "replacements": [
+        {
+          "pattern": "^    override_path: .*esp-mosaico-bsp/components/esp-mosaico-bsp$",
+          "replacement": "    override_path: {{bsp_component|json}}"
+        },
+        {
+          "pattern": "^    override_path: .*ESP-Iris/components/esp_iris$",
+          "replacement": "    override_path: {{iris_component|json}}"
+        }
+      ]
+    },
+    {
+      "source": "main/main.c",
+      "replacements": [
+        {
+          "pattern": "^static const char \\*TAG = \"hello_world\";",
+          "replacement": "static const char *TAG = \"{{project_name}}\";"
+        }
+      ]
+    },
+    {
+      "source": "partitions.csv"
+    },
+    {
+      "source": "pc/CMakeLists.txt"
+    },
+    {
+      "source": "pc/platform_pc.c"
+    },
+    {
+      "source": "sdkconfig.application.defaults",
+      "replacements": [
+        {
+          "pattern": "^CONFIG_ESP_IRIS_USB_PRODUCT=\"[^\"\\n]*\"",
+          "replacement": "CONFIG_ESP_IRIS_USB_PRODUCT=\"ESP-Iris Mosaico {{project_name}}\""
+        }
+      ]
+    },
+    {
+      "source": "sdkconfig.defaults"
+    },
+    {
+      "source": "ui/fonts/DejaVuSans-Bold.ttf"
+    },
+    {
+      "source": "ui/fonts/DejaVuSans.ttf"
+    },
+    {
+      "source": "ui/fonts/LICENSE"
+    },
+    {
+      "source": "ui/main.json"
+    }
+  ]
+}

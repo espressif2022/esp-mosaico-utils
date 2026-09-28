@@ -1,3 +1,4 @@
+import { deviceStateLabel } from "./deviceState";
 import {
   FormEvent,
   PointerEvent as ReactPointerEvent,
@@ -285,9 +286,9 @@ export default function Workspace({
               className={`connection-label ${device.connected ? "connected" : ""}`}
             >
               <i
-                className={`status-dot ${device.connected ? "online" : "offline"}`}
+                className={`status-dot ${device.state}`}
               />
-              {device.connected ? "已连接" : "离线"}
+              {deviceStateLabel(device.state)}
             </span>
             <span>
               {device.project_name || "项目未知"} {device.app_version || ""}

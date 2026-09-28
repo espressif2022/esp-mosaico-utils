@@ -1,7 +1,11 @@
 /* Hardware and unrelated providers only; runtime, services, codec and
  * transport arbitration below run their production implementations. */
 unsigned uxTaskGetStackHighWaterMark2(void *p) { return 9999; }
-unsigned ulTaskNotifyTake(int b, unsigned n) { return 0; }
+static unsigned (*notify_take_hook)(unsigned ticks);
+static void (*task_delay_hook)(unsigned ticks);
+unsigned ulTaskNotifyTake(int b, unsigned n) {
+    return notify_take_hook != NULL ? notify_take_hook(n) : 0;
+}
 void vTaskDelete(void *p) { }
 static bool fail_task_create;
 int xTaskCreate(void (*f)(void *),const char *n,unsigned s,void *p,unsigned pri,TaskHandle_t *t) {
@@ -11,7 +15,7 @@ int xTaskCreate(void (*f)(void *),const char *n,unsigned s,void *p,unsigned pri,
 TaskHandle_t xTaskGetCurrentTaskHandle(void) { return NULL; }
 void xTaskNotifyGive(TaskHandle_t t) { }
 unsigned xTaskGetTickCount(void) { return 0; }
-void vTaskDelay(unsigned n) { }
+void vTaskDelay(unsigned n) { if (task_delay_hook != NULL) task_delay_hook(n); }
 const esp_app_desc_t *esp_app_get_description(void) { static esp_app_desc_t d; return &d; }
 size_t heap_caps_get_free_size(unsigned c) { return 10000; }
 size_t heap_caps_get_minimum_free_size(unsigned c) { return 10000; }
@@ -71,10 +75,15 @@ static uint8_t incoming[256], outgoing[1024];
 static size_t incoming_size, incoming_offset, read_limit = 256;
 static size_t outgoing_size, write_limit = 1024;
 static bool candidate;
+static void (*transport_poll_hook)(iris_runtime_t *runtime);
 static unsigned starts, stops;
 static esp_err_t fake_start(iris_runtime_t *r, iris_transport_state_t *s) { ++starts; s->driver_started = true; return ESP_OK; }
 static void fake_stop(iris_runtime_t *r, iris_transport_state_t *s) { ++stops; s->driver_started = false; }
-static iris_link_event_t fake_poll(iris_runtime_t *r, iris_transport_state_t *s) { if (candidate) { candidate = false; return IRIS_LINK_EVENT_CONNECTED; } return IRIS_LINK_EVENT_NONE; }
+static iris_link_event_t fake_poll(iris_runtime_t *r, iris_transport_state_t *s) {
+    if (transport_poll_hook != NULL) transport_poll_hook(r);
+    if (candidate) { candidate = false; return IRIS_LINK_EVENT_CONNECTED; }
+    return IRIS_LINK_EVENT_NONE;
+}
 static void fake_disconnect(iris_runtime_t *r, iris_transport_state_t *s) { }
 static int fake_read(iris_runtime_t *r, iris_transport_state_t *s, uint8_t *b, size_t n) {
     if (n > incoming_size - incoming_offset) n = incoming_size - incoming_offset;

@@ -1,0 +1,2 @@
+# Offline asset regeneration only; not a firmware build dependency.
+qrcode[pil]==8.2

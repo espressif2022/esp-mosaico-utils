@@ -16,7 +16,9 @@ typedef struct {
     const char *server_url;
     const char *board_id;
     const char *device_id;
-    bool enable_factory_update;
+    bool enable_factory_update; /* Recovery self-update; default false. */
+    bool enable_system_update; /* .irisfw transactions; default false. */
+    bool enable_bootloader_update; /* Requires system_update; default false. */
     /* Register/cache a code without polling for or executing remote work. */
     bool prefetch_only;
     /* Nonblocking readiness probe; called only by the Bridge worker. */

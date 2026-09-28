@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .device_state import DEVICE_STATES
+
 
 def build_openapi(auth_required: bool) -> dict[str, Any]:
     control_paths = {
@@ -14,7 +16,6 @@ def build_openapi(auth_required: bool) -> dict[str, Any]:
         "/v1/devices/{device_id}/system-update": "Authenticated system update",
         "/v1/devices/{device_id}/input": "Pointer or touch gesture",
         "/v1/devices/{device_id}/console": "Submit one console command line",
-        "/v1/devices/{device_id}/maintenance-leases": "Acquire local maintenance lease",
         "/v1/devices/{device_id}/screenshot": "Capture screenshot",
         "/v1/devices/{device_id}/mirror/start": "Start media mirror",
         "/v1/devices/{device_id}/mirror/stop": "Stop media mirror",
@@ -26,18 +27,31 @@ def build_openapi(auth_required: bool) -> dict[str, Any]:
         "/v1/project/clients/{client_id}/release": {"post": {"summary": "Release only this client's lease; does not stop the Gateway"}},
         "/v1/project/acquire": {"post": {"summary": "Explicitly acquire a device or discovered endpoint"}},
         "/v1/project/release": {"post": {"summary": "Release an idle owned device"}},
-        "/v1/project/transfer": {"post": {"summary": "Transfer an idle device to a live local project session"}},
-        "/v1/project/prepare": {"post": {"summary": "Reserve and release a device for a named receiving session"}},
-        "/v1/project/accept": {"post": {"summary": "Accept and validate a reserved transfer"}},
-        "/v1/project/abort": {"post": {"summary": "Explicit source rollback after target release"}},
+        "/v1/project/takeovers": {"post": {
+            "summary": "Request a device from its current owner into this receiving session",
+            "requestBody": {"required": True, "content": {"application/json": {"schema": {
+                "type": "object", "additionalProperties": False,
+                "properties": {"device_id": {"type": ["string", "null"]}, "endpoint": {"type": ["string", "null"]},
+                               "takeover_id": {"type": "string", "format": "uuid"},
+                               "force": {"type": "boolean", "default": False},
+                               "timeout": {"type": "number", "exclusiveMinimum": 0, "maximum": 3600, "default": 120}},
+                "oneOf": [
+                    {"required": ["device_id"], "properties": {"device_id": {"type": "string"}, "endpoint": {"type": "null"}}},
+                    {"required": ["endpoint"], "properties": {"endpoint": {"type": "string"}, "device_id": {"type": "null"}}},
+                ],
+            }}}},
+        }},
+        "/v1/project/takeovers/{takeover_id}": {"get": {"summary": "Read durable takeover state"}},
+        "/v1/project/takeovers/{takeover_id}/resume": {"post": {"summary": "Continue receiver identity validation"}},
+        "/v1/project/takeovers/{takeover_id}/abort": {"post": {"summary": "Roll back an incomplete takeover from the original owner"}},
+        "/v1/project/takeovers/{takeover_id}/reconcile": {"post": {"summary": "Resolve reserved ownership after both original sessions died"}},
         "/v1/project/reconcile": {"post": {"summary": "Explicitly reconcile a dead owner's ordinary device claim"}},
-        "/v1/project/reconcile-transfer": {"post": {"summary": "Resolve an interrupted transfer after both sessions died"}},
-        "/v1/project/transfers/{transfer_id}": {"get": {"summary": "Read durable transfer state"}},
         "/v1/health": {"get": {"summary": "Gateway health"}},
         "/v1/auth/login": {"post": {"summary": "Developer password login"}},
         "/v1/devices": {"get": {"summary": "Connected and cached devices"}},
-        "/v1/maintenance-endpoints/leases": {
-            "post": {"summary": "Acquire local physical-endpoint maintenance lease"}
+        "/v1/host-operations": {
+            "post": {"summary": "Submit a local process-owned ROM operation",
+                     "description": "Requires a private local request file ID; executable commands are never accepted over HTTP."}
         },
         "/v1/devices/{device_id}": {
             "get": {"summary": "Current or cached status"},
@@ -100,18 +114,7 @@ def build_openapi(auth_required: bool) -> dict[str, Any]:
         },
         "/v1/system-audit": {"get": {"summary": "Gateway system audit"}},
         "/v1/metrics": {"get": {"summary": "Gateway process metrics"}},
-        "/v1/maintenance-leases/{lease_id}": {
-            "get": {"summary": "Get maintenance lease state"}
-        },
-        "/v1/maintenance-leases/{lease_id}/renew": {
-            "post": {"summary": "Renew local maintenance lease"}
-        },
-        "/v1/maintenance-leases/{lease_id}/complete": {
-            "post": {"summary": "Reattach and verify maintained device"}
-        },
-        "/v1/maintenance-leases/{lease_id}/abort": {
-            "post": {"summary": "Abort maintenance and reattach device"}
-        },
+
     }
     for path, summary in control_paths.items():
         paths[path] = {"post": {"summary": summary}}
@@ -177,6 +180,17 @@ def build_openapi(auth_required: bool) -> dict[str, Any]:
         "in": "header", "name": "X-Iris-Compatibility", "required": False,
         "content": {"application/json": {"schema": compatibility_schema}},
     }]
+    paths["/v1/host-operations"]["post"]["requestBody"] = {
+        "required": True, "content": {"application/json": {"schema": {
+            "type": "object", "additionalProperties": False,
+            "required": ["request_id"], "properties": {"request_id": {"type": "string", "format": "uuid"}},
+        }}},
+    }
+    paths["/v1/devices"]["get"]["responses"] = {
+        "200": {"description": "Device inventory", "content": {"application/json": {"schema": {
+            "type": "object", "properties": {"devices": {"type": "array", "items": {"$ref": "#/components/schemas/Device"}}},
+        }}}},
+    }
     paths["/v1/devices/{device_id}/jobs/{job_id}"] = {
         "get": {"summary": "Query job"},
         "delete": {"summary": "Cancel job"},
@@ -190,6 +204,16 @@ def build_openapi(auth_required: bool) -> dict[str, Any]:
         },
         "servers": [{"url": "/"}],
         "components": {
+            "schemas": {"Device": {
+                "type": "object", "required": ["device_id", "state"],
+                "properties": {
+                    "device_id": {"type": "string"},
+                    "state": {"type": "string", "enum": list(DEVICE_STATES)},
+                    "firmware_mode": {"type": "string", "enum": ["normal", "recovery", "rom", "unknown"]},
+                    "owner_session_id": {"type": ["string", "null"]},
+                    "busy_reasons": {"type": "array", "items": {"type": "object"}},
+                },
+            }},
             "securitySchemes": {
                 "cookieAuth": {
                     "type": "apiKey",
