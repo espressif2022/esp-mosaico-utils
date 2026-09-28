@@ -82,7 +82,6 @@ def add_commands(commands, project_commands):
             child.add_argument("--idf-path")
             child.add_argument("--target", choices=("native", "iris"), default="native",
                                help="native: build the project as is; iris: wrap an engine game as an ESP-Iris app")
-            child.add_argument("--product-root", help="Product checkout used by managed native builds")
         else:
             child.add_argument("--headless", action="store_true")
             child.add_argument("--frames", type=int, default=300)
@@ -152,12 +151,6 @@ def run(arguments, workspace):
         from .runtime import RunContext, build_application
         if arguments.idf_path:
             os.environ["IDF_PATH"] = str(Path(arguments.idf_path).expanduser().resolve())
-        product = (Path(arguments.product_root).expanduser().resolve()
-                   if arguments.product_root else workspace.product_path)
-        if product is not None:
-            os.environ["MOSAICO_PRODUCT_ROOT"] = str(product)
-        elif iris:
-            raise EnvironmentError("Set dependencies.product or --product-root for an Iris build.")
         os.environ["MOSAICO_BSP_ROOT"] = str(workspace.bsp_path)
         os.environ["MOSAICO_UTILS_ROOT"] = str(workspace.tool_root.parent)
         os.environ["RAYLIB_LITE_ENGINE_ROOT"] = str(workspace.raylib_path)

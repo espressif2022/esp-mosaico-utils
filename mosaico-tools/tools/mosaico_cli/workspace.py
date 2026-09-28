@@ -33,7 +33,6 @@ class WorkspaceConfig:
     init_template: Path | None = None
     gateway_source_policy: str = "compatible"
     raylib_path: Path | None = None
-    product_path: Path | None = None
 
     def resolve(self, value: str) -> Path:
         path = Path(value).expanduser()
@@ -194,13 +193,6 @@ def load_workspace(
             os.environ.get("RAYLIB_LITE_ENGINE_ROOT")
             or dependencies.get("raylib", "submodule/raylib-lite-engine"),
             "dependencies.raylib",
-        ),
-        product_path=(
-            workspace_path(
-                os.environ.get("MOSAICO_PRODUCT_ROOT") or dependencies["product"],
-                "dependencies.product",
-            )
-            if os.environ.get("MOSAICO_PRODUCT_ROOT") or "product" in dependencies else None
         ),
         init_template=(
             workspace_path(workspace["init_template"], "workspace.init_template")
