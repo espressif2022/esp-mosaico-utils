@@ -41,6 +41,7 @@ WARNING_RE = re.compile(r"\bwarning:", re.I)
 DEFAULT_CONTEXT_BEFORE = 8
 DEFAULT_CONTEXT_AFTER = 20
 DEFAULT_MAX_LINES = 120
+PREVIEW_TARGETS = frozenset({"esp32h21", "esp32h4", "esp32s31", "linux"})
 SCAN_EXCLUDES = {
     ".git",
     ".codex",
@@ -216,6 +217,13 @@ def configured_target(project: Path) -> str | None:
     return None
 
 
+def idf_action_arguments(project: Path, action: str) -> list[str]:
+    arguments = [action]
+    if configured_target(project) in PREVIEW_TARGETS:
+        arguments.insert(0, "--preview")
+    return arguments
+
+
 def declared_idf_constraint(project: Path) -> str | None:
     for path in (project / "main" / "idf_component.yml", project / "idf_component.yml"):
         if path.is_file():
@@ -303,15 +311,21 @@ def collect_artifacts(project: Path) -> list[dict[str, Any]]:
             for key in ("app_bin", "app_elf"):
                 value = data.get(key)
                 if isinstance(value, str):
-                    candidates.append(Path(value))
+                    path = Path(value)
+                    candidates.append(path if path.is_absolute() else build / path)
         except (OSError, json.JSONDecodeError):
             pass
     candidates.extend(build.glob("*.bin"))
     candidates.extend(build.glob("*.elf"))
     artifacts: list[dict[str, Any]] = []
-    for path in sorted(set(candidates)):
+    seen: set[Path] = set()
+    for path in candidates:
+        path = path.resolve()
+        if path in seen:
+            continue
+        seen.add(path)
         if path.is_file():
-            artifacts.append({"path": str(path.resolve()), "size_bytes": path.stat().st_size})
+            artifacts.append({"path": str(path), "size_bytes": path.stat().st_size})
     return artifacts[:12]
 
 
@@ -749,7 +763,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     action="fullclean",
                     project=project,
                     idf_path=idf_path,
-                    arguments=["fullclean"],
+                    arguments=idf_action_arguments(project, "fullclean"),
                     log_root=log_root,
                     progress=args.progress,
                 )
@@ -759,7 +773,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 action="build",
                 project=project,
                 idf_path=idf_path,
-                arguments=["build"],
+                arguments=idf_action_arguments(project, "build"),
                 log_root=log_root,
                 progress=args.progress,
             )
